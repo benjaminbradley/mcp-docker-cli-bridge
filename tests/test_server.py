@@ -1,4 +1,8 @@
 """Tests for server.py — MCP Docker CLI Bridge."""
+import asyncio
+import json
+import subprocess
+
 import pytest
 from pydantic import ValidationError
 
@@ -141,3 +145,236 @@ class TestBuildTools:
             ),
         )
         assert build_tools(config)[0].description == "Execute: python -m pytest src/"
+
+
+class TestValidateArgs:
+    """Tests for validate_args() — metacharacter blocklist and type check."""
+
+    def test_valid_args_returns_none(self):
+        from server import validate_args
+
+        assert validate_args(["--tb=short"]) is None
+
+    def test_empty_args_returns_none(self):
+        from server import validate_args
+
+        assert validate_args([]) is None
+
+    def test_semicolon_rejected(self):
+        from server import validate_args
+
+        assert validate_args(["--flag; rm -rf /"]) is not None
+
+    def test_pipe_rejected(self):
+        from server import validate_args
+
+        assert validate_args(["foo | bar"]) is not None
+
+    def test_double_ampersand_rejected(self):
+        from server import validate_args
+
+        assert validate_args(["foo && bar"]) is not None
+
+    def test_double_pipe_rejected(self):
+        from server import validate_args
+
+        assert validate_args(["foo || bar"]) is not None
+
+    def test_backtick_rejected(self):
+        from server import validate_args
+
+        assert validate_args(["`cmd`"]) is not None
+
+    def test_subshell_rejected(self):
+        from server import validate_args
+
+        assert validate_args(["$(cmd)"]) is not None
+
+    def test_redirect_gt_rejected(self):
+        from server import validate_args
+
+        assert validate_args(["> /etc/passwd"]) is not None
+
+    def test_redirect_lt_rejected(self):
+        from server import validate_args
+
+        assert validate_args(["< /etc/shadow"]) is not None
+
+    def test_non_string_arg_rejected(self):
+        from server import validate_args
+
+        assert validate_args([123]) is not None
+
+
+class TestExecuteCommand:
+    """Tests for execute_command() — subprocess execution and result capture."""
+
+    def _make_config(self, **commands):
+        from server import CommandEntry, CommandsConfig
+
+        return CommandsConfig(
+            commands={
+                name: CommandEntry(**kwargs) for name, kwargs in commands.items()
+            }
+        )
+
+    def test_captures_stdout_and_exit_code(self):
+        from server import execute_command
+
+        config = self._make_config(
+            echo=dict(command=["echo", "hello"], allow_extra_args=True, cwd="/tmp")
+        )
+        result = execute_command("echo", ["world"], config)
+        assert "hello" in result.stdout
+        assert "world" in result.stdout
+        assert result.exit_code == 0
+
+    def test_captures_stderr(self):
+        from server import execute_command
+
+        config = self._make_config(
+            stderr_cmd=dict(
+                command=["python", "-c", "import sys; sys.stderr.write('err\\n')"],
+                allow_extra_args=False,
+                cwd="/tmp",
+            )
+        )
+        result = execute_command("stderr_cmd", [], config)
+        assert "err" in result.stderr
+
+    def test_nonzero_exit_code_returned(self):
+        from server import execute_command
+
+        config = self._make_config(
+            fail=dict(
+                command=["python", "-c", "import sys; sys.exit(1)"],
+                allow_extra_args=False,
+                cwd="/tmp",
+            )
+        )
+        result = execute_command("fail", [], config)
+        assert result.exit_code == 1
+
+    def test_timeout_raises(self):
+        from server import execute_command
+
+        config = self._make_config(
+            slow=dict(command=["sleep", "5"], allow_extra_args=False, cwd="/tmp", timeout=1)
+        )
+        with pytest.raises(subprocess.TimeoutExpired):
+            execute_command("slow", [], config)
+
+    def test_missing_executable_raises(self):
+        from server import execute_command
+
+        config = self._make_config(
+            bad=dict(command=["nonexistent_binary_xyz"], allow_extra_args=False, cwd="/tmp")
+        )
+        with pytest.raises(FileNotFoundError):
+            execute_command("bad", [], config)
+
+
+class TestToolHandlers:
+    """Integration tests for tool handler functions — call handlers directly."""
+
+    def _make_config(self, **commands):
+        from server import CommandEntry, CommandsConfig
+
+        return CommandsConfig(
+            commands={
+                name: CommandEntry(**kwargs) for name, kwargs in commands.items()
+            }
+        )
+
+    def _reset_lock(self):
+        import server
+
+        server._lock = asyncio.Lock()
+        server._current_command = None
+
+    @pytest.mark.asyncio
+    async def test_success_path_returns_command_result_json(self):
+        import server
+
+        self._reset_lock()
+        config = self._make_config(
+            echo=dict(command=["echo", "hello"], allow_extra_args=True, cwd="/tmp")
+        )
+        handler = server._create_tool_handler("echo", config)
+        result_str = await handler(args=["world"])
+        data = json.loads(result_str)
+        assert "stdout" in data
+        assert "stderr" in data
+        assert "exit_code" in data
+        assert data["exit_code"] == 0
+
+    @pytest.mark.asyncio
+    async def test_nonzero_exit_code_is_not_error(self):
+        import server
+
+        self._reset_lock()
+        config = self._make_config(
+            fail=dict(
+                command=["python", "-c", "import sys; sys.exit(1)"],
+                allow_extra_args=False,
+                cwd="/tmp",
+            )
+        )
+        handler = server._create_tool_handler("fail", config)
+        result_str = await handler()
+        data = json.loads(result_str)
+        assert data["exit_code"] == 1
+
+    @pytest.mark.asyncio
+    async def test_metacharacter_args_return_is_error(self):
+        import server
+
+        self._reset_lock()
+        config = self._make_config(
+            echo=dict(command=["echo"], allow_extra_args=True, cwd="/tmp")
+        )
+        handler = server._create_tool_handler("echo", config)
+        with pytest.raises(Exception, match=";"):
+            await handler(args=["--flag; rm -rf /"])
+
+    @pytest.mark.asyncio
+    async def test_timeout_returns_is_error(self):
+        import server
+
+        self._reset_lock()
+        config = self._make_config(
+            slow=dict(command=["sleep", "5"], allow_extra_args=False, cwd="/tmp", timeout=1)
+        )
+        handler = server._create_tool_handler("slow", config)
+        with pytest.raises(Exception, match="timed out after 1s"):
+            await handler()
+
+    @pytest.mark.asyncio
+    async def test_exec_failure_returns_is_error(self):
+        import server
+
+        self._reset_lock()
+        config = self._make_config(
+            bad=dict(command=["nonexistent_xyz"], allow_extra_args=False, cwd="/tmp")
+        )
+        handler = server._create_tool_handler("bad", config)
+        with pytest.raises(Exception, match="not found"):
+            await handler()
+
+    @pytest.mark.asyncio
+    async def test_busy_rejection_returns_is_error(self):
+        import server
+
+        server._lock = asyncio.Lock()
+        server._current_command = "other_cmd"
+        await server._lock.acquire()
+        try:
+            config = self._make_config(
+                echo=dict(command=["echo"], allow_extra_args=False, cwd="/tmp")
+            )
+            handler = server._create_tool_handler("echo", config)
+            with pytest.raises(Exception, match="busy"):
+                await handler()
+        finally:
+            server._lock.release()
+            server._current_command = None
