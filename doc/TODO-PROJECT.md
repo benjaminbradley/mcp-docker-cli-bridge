@@ -11,4 +11,5 @@ claude code usage tracking - sonnet 4.6 as main model
 6.45  start
 6.74  after /init
 7.29  after planning & updating docs for TDD
-  after planning & updating docs for docker-based dev/e2e testing
+8.28  after planning & updating docs for docker-based dev/e2e testing
+8.56  after documenting Makefile commands in README and adding 0.0 to TODO

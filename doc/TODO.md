@@ -32,6 +32,19 @@ Legend:
 
 **Goal:** A running MCP server that loads and validates `commands.json` on startup via pydantic models, registers tools from the whitelist, and responds to `tools/list`. No command execution yet — just startup, config validation, tool registration, and transport.
 
+### 0.0 — Dev container setup
+
+> **Infrastructure task — no TDD cycle.** Creates the container environment in which all subsequent TDD cycles run.
+> **Note:** `make build` requires 0.1's `requirements.txt` to exist first. Create 0.0 and 0.1 files together, then verify both.
+
+- [ ] Create `Dockerfile` (base stage: MCP SDK deps + server.py + non-root user; dev stage: adds pytest, ruff, mypy, pytest-asyncio)
+- [ ] Create `docker-compose.yml` (service `my-app`, port `127.0.0.1:7357:7357`, volumes: `commands.dev.json:ro`, `data/bridge-logs`, `server.py`, `tests/`)
+- [ ] Create `commands.dev.json` (e2e test whitelist: `echo_test`, `run_tests`, `run_lint`, `run_typecheck`, `run_format_check`, `sleep_test`)
+- [ ] Create `Makefile` (`help`, `build`, `up`, `down`, `logs`, `test`, `lint`, `typecheck`, `format`, `shell`)
+- [ ] Create `.mcp.json` (registers `http://my-app:7357/mcp` as `bridge-dev` MCP server)
+- [ ] **Verify:** `make build` succeeds. `make up` starts the server (banner visible in `make logs`). `make down` stops it cleanly. `make test` exits (no tests yet — failure expected but container runs). Claude Code discovers `bridge-dev` tools via `tools/list` once `server.py` exists.
+- **Files:** `Dockerfile`, `docker-compose.yml`, `commands.dev.json`, `Makefile`, `.mcp.json`
+
 ### 0.1 — Create requirements.txt
 
 > **Infrastructure task — no TDD cycle.** This task installs dependencies with no testable logic. Verification is manual (`pip install`).

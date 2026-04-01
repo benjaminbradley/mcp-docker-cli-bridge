@@ -180,6 +180,25 @@ Every tool invocation is logged to `bridge.jsonl` with full request/response pay
 
 The log directory is volume-mounted from the host, so logs persist across container rebuilds.
 
+## Development
+
+Requires Docker. All commands are in the Makefile:
+
+```bash
+make help          # list available targets
+make build         # build the dev image
+make up            # start the bridge server (http://localhost:7357/mcp)
+make down          # stop the bridge server
+make logs          # tail server logs
+make test          # run unit tests inside the container
+make lint          # ruff check
+make typecheck     # mypy
+make format        # ruff format
+make shell         # open a shell in the container
+```
+
+The bridge registers itself as an MCP server via `.mcp.json` (`bridge-dev` at `http://my-app:7357/mcp`). With the container running, Claude Code discovers and can call `echo_test`, `run_tests`, `run_lint`, `run_typecheck`, `run_format_check`, and `sleep_test` as tools for e2e verification.
+
 ## Removal
 
 To remove the bridge from a project, delete these files — no application source code changes needed:
