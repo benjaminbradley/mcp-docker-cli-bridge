@@ -1,4 +1,4 @@
-# Specifications — Docker CLI Access Bridge
+# Specifications — Docker CLI Access Bridge MCP
 
 > **Status:** Approved
 > **Last updated:** 2026-04-01
@@ -376,7 +376,7 @@ Python 3.11 or higher (matching the MCP SDK's minimum requirement).
 
 ## 8. Consumer Integration Specifications
 
-These specs define what a host project (e.g., find-work-bot) must provide to use the bridge. The bridge project itself does not contain these files.
+These specs define what a host project (e.g., example-app) must provide to use the bridge. The bridge project itself does not contain these files.
 
 ### 8.1 Dockerfile Dev Stage
 
@@ -404,7 +404,7 @@ services:
     build:
       target: dev
       additional_contexts:
-        bridge: ../docker-cli-access-bridge
+        bridge: ../mcp-docker-cli-bridge
     volumes:
       - ./src:/app/src
       - ./commands.json:/bridge/commands.json:ro
@@ -438,7 +438,7 @@ A file at the consumer project root that registers the bridge with Claude Code:
 }
 ```
 
-The `<compose-service-name>` is the Docker Compose service name as visible on the shared bridge network. For find-work-bot this would be the app service name from `docker-compose.dev.yml`.
+The `<compose-service-name>` is the Docker Compose service name as visible on the shared bridge network. For example-app this would be the app service name from `docker-compose.dev.yml`.
 
 Alternatively, operators can register via CLI without committing to the repo:
 ```bash
@@ -526,10 +526,10 @@ With a ~20-line Python script using the MCP client SDK. Preferred if the dev env
 
 ## 9. Consumer File Layout
 
-Files the consumer project provides (using find-work-bot as the example):
+Files the consumer project provides (using example-app as the example):
 
 ```
-find-work-bot/
+example-app/
 ├── commands.json              # Bridge whitelist (project-specific)
 ├── .mcp.json                  # MCP registration for Claude Code
 ├── docker-compose.dev.yml     # Dev overlay (bridge integration)

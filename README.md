@@ -1,4 +1,4 @@
-# Docker CLI Access Bridge
+# Docker CLI Access Bridge MCP
 
 A lightweight MCP (Model Context Protocol) server that grants secure, controlled access to CLI commands inside a Docker container. Designed for AI-assisted development workflows where an external agent (e.g., Claude Code) needs to run tests, linters, and other dev tools inside an application container without Docker socket access.
 

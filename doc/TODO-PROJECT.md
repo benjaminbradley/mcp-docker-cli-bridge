@@ -1,8 +1,6 @@
 #LLMs: IGNORE THIS FILE#
 
 - the claude code container does not have python installed by default (it does have node) - use this for the example precommit hook script instead
-- rename from docker-cli-access-bridge to mcp-docker-cli-bridge
-- rename find-work-bot in examples to example-app
 - in addition to the timeout passed in the tool use call from the client, the commands.json config should include a maximum timeout globally, which can be customized per command
 - clean up qualifiers which won't make sense in a finished product ("option b") - should only be a part of ADR
 - request logger should log full request/response payloads for audit purposes (future: configurable yes/no), in addition to existing fields

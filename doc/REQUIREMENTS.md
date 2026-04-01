@@ -1,4 +1,4 @@
-# Requirements — Docker CLI Access Bridge
+# Requirements — Docker CLI Access Bridge MCP
 
 > **Status:** Approved
 > **Last updated:** 2026-04-01

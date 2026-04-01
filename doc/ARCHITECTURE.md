@@ -1,4 +1,4 @@
-# Architecture — Docker CLI Access Bridge
+# Architecture — Docker CLI Access Bridge MCP
 
 > **Status:** Approved
 > **Last updated:** 2026-04-01
@@ -174,7 +174,7 @@ The bridge project is a **sibling directory dependency** — it lives alongside 
 
 ```
 parent/
-├── docker-cli-access-bridge/    # This project (shared tool)
+├── mcp-docker-cli-bridge/    # This project (shared tool)
 │   ├── server.py                # The bridge MCP server
 │   ├── requirements.txt         # MCP SDK + dependencies
 │   ├── README.md
@@ -187,7 +187,7 @@ parent/
 │           ├── 001-mcp-transport.md
 │           └── 002-pydantic-models.md
 │
-├── find-work-bot/               # Consumer project A
+├── example-app/               # Consumer project A
 │   ├── commands.json            # FWB-specific whitelist
 │   ├── .mcp.json                # MCP registration for CC
 │   ├── docker-compose.dev.yml   # Dev override referencing bridge

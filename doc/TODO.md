@@ -1,4 +1,4 @@
-# Implementation Plan — Docker CLI Access Bridge
+# Implementation Plan — Docker CLI Access Bridge MCP
 
 > **Status:** Active
 > **Created:** 2026-04-01
@@ -77,9 +77,9 @@ Legend:
 
 **Goal:** Verify the bridge works end-to-end in its intended deployment context: inside a Docker container on a bridge network, with a consumer project's commands.json and Claude Code as the MCP client.
 
-### 3.1 — Consumer integration files for find-work-bot
-- [ ] In find-work-bot, create the integration files per SPECS.md §8 and §9: `commands.json`, `docker-compose.dev.yml`, Dockerfile `dev` stage, `.mcp.json`, `doc/DEVELOPMENT.md`.
-- [ ] Add `dev-up` and `dev-down` targets to find-work-bot Makefile.
+### 3.1 — Consumer integration files for example-app
+- [ ] In example-app, create the integration files per SPECS.md §8 and §9: `commands.json`, `docker-compose.dev.yml`, Dockerfile `dev` stage, `.mcp.json`, `doc/DEVELOPMENT.md`.
+- [ ] Add `dev-up` and `dev-down` targets to example-app Makefile.
 - [ ] **Verify:** `make dev-up` builds the dev image (including bridge + MCP SDK), starts the container, and the bridge server starts listening. `make dev-down` stops it cleanly.
 
 ### 3.2 — MCP client verification
@@ -87,12 +87,12 @@ Legend:
 - [ ] **Verify:** Claude Code discovers the tools via `tools/list`. Running a tool call (e.g., `run_tests`) returns pytest output. Running `run_lint` returns ruff output. The bridge JSONL log on the host contains entries for each call.
 
 ### 3.3 — Pre-commit hook
-- [ ] Create pre-commit hook script in find-work-bot per SPECS.md §8.5.
+- [ ] Create pre-commit hook script in example-app per SPECS.md §8.5.
 - [ ] Document installation in `doc/DEVELOPMENT.md`.
 - [ ] **Verify:** With the dev container running, `git commit` triggers lint/typecheck/test via the bridge. A failing check blocks the commit with clear output. Bridge unreachable → clear error message suggesting `make dev-up`.
 
 ### 3.4 — Makefile dual-mode
-- [ ] Update find-work-bot Makefile targets (`test`, `lint`, `typecheck`, `format`) to use the `DEV_RUNNING` detection pattern per SPECS.md §8.4.
+- [ ] Update example-app Makefile targets (`test`, `lint`, `typecheck`, `format`) to use the `DEV_RUNNING` detection pattern per SPECS.md §8.4.
 - [ ] **Verify:** With dev container running, `make test` uses `exec`. With dev container stopped, `make test` uses `run --rm`. Both produce the same test results.
 
 ---
