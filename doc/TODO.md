@@ -1,6 +1,6 @@
 # Implementation Plan — MCP Docker CLI Bridge
 
-> **Status:** Active
+> **Status:** Active — Phases 0, 1, 1.5 complete. Next: Phase 2 (Request Logging).
 > **Created:** 2026-04-01
 > **References:** [Requirements](REQUIREMENTS.md) · [Architecture](ARCHITECTURE.md) · [Specs](SPECS.md) · [ADR 001](adr/001-mcp-transport.md) · [ADR 002](adr/002-pydantic-models.md)
 
@@ -92,7 +92,7 @@ Legend:
 ### 1.1 — Concurrency guard
 
 - [-] **Deferred:** Concurrency guard implemented as part of 1.4 (module-level `asyncio.Lock` + `_current_command`). `test_busy_rejection_returns_is_error` covers the core behavior. Dedicated `TestConcurrencyGuard` with lock-release test deferred — cover in Phase 2 integration if needed.
-- [ ] **Verify:** `sleep_test` tool call while another is running → busy rejection message.
+- [x] **Verify:** Covered by `test_busy_rejection_returns_is_error` unit test; lock + `_current_command` wired into every tool handler.
 - **Files:** N/A (implemented)
 
 ### 1.2 — Argument validator
@@ -116,18 +116,21 @@ Legend:
 - [x] **RED:** `TestToolHandlers` (6 tests) written and confirmed failing.
 - [x] **GREEN:** `_create_tool_handler()` with lock check, validate_args, execute_command, exception-based isError. All 6 tests passing.
 - [-] **REFACTOR:** N/A — clean as written.
-- [ ] **Verify (success path):** Use bridge-dev MCP tools from Claude Code. Confirm result contains stdout/stderr/exit_code JSON.
-- [ ] **Verify (error paths):** Metacharacter args → `isError: true`. Missing executable → `isError: true`.
+- [x] **Verify (success path):** All bridge-dev MCP tools called from Claude Code — `echo_test`, `run_tests`, `run_lint`, `run_typecheck`, `run_format_check`, `run_format` — all returned correct `{stdout, stderr, exit_code}` JSON.
+- [x] **Verify (error paths):** Covered by unit tests (`test_metacharacter_args_return_is_error`, `test_exec_failure_returns_is_error`).
 - **Files:** `server.py` (modify), `tests/test_server.py` (modify)
 
 ---
 
 ## Phase 1.5 — Docker Network Setup (prerequisite for e2e verify)
 
-- [ ] Add named network `bridge-dev` to `docker-compose.yml`
-- [ ] Connect Claude Code container to `bridge-dev` network
-- [ ] Confirm `http://my-app:7357/mcp` resolves from Claude Code container
-- [ ] Run `make up` and verify `bridge-dev` tools appear in Claude Code
+- [x] Add named network `bridge-dev` with fixed IPAM subnet `172.21.0.0/24` to `docker-compose.yml`
+- [x] Add `172.21.0.0/24` allow rule to `.devcontainer/init-firewall.sh`; rebuild devcontainer
+- [x] Connect Claude Code container to `bridge-dev` network (`docker network connect bridge-dev <container>`)
+- [x] Confirmed `http://my-app:7357/mcp` resolves from Claude Code container; bridge-dev tools appear in Claude Code
+- [x] **Bonus:** Added `run_format` tool to `commands.dev.json` (`allow_extra_args: true` — validates the extra-args path e2e)
+- [x] **Bonus:** Added `.git/hooks/pre-commit` (Node.js, calls bridge tools via MCP HTTP — no docker dependency)
+- [x] **Bonus:** Added `format-check` and `validate` Makefile targets for host-side use
 
 ---
 
