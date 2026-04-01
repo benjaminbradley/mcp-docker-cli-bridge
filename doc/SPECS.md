@@ -107,7 +107,21 @@ The `text` field contains a `CommandResult` model serialized to JSON (see §6.1)
 }
 ```
 
+**Busy result** (concurrent execution rejected):
+```json
+{
+  "content": [
+    {
+      "type": "text",
+      "text": "Bridge is busy executing 'run_tests'. Retry after it completes."
+    }
+  ],
+  "isError": true
+}
+```
+
 Bridge-level errors that set `isError: true`:
+- Concurrency rejection (another command is already running). The error message names the in-progress command and tells the client to retry.
 - Argument validation failure (metacharacter detected).
 - Command timeout (`subprocess.TimeoutExpired`).
 - Subprocess execution failure (`FileNotFoundError` — executable not found).
@@ -221,7 +235,7 @@ Successful execution:
 }
 ```
 
-Rejected request:
+Rejected — argument validation:
 
 ```json
 {
@@ -236,6 +250,24 @@ Rejected request:
   "stderr_bytes": 0,
   "rejected": true,
   "rejection_reason": "Argument contains disallowed characters: '--flag; rm -rf /'"
+}
+```
+
+Rejected — busy (concurrent execution):
+
+```json
+{
+  "timestamp": "2026-04-01T14:22:09.001Z",
+  "command": "run_lint",
+  "args": [],
+  "exit_code": null,
+  "duration_ms": 0,
+  "stdout": null,
+  "stderr": null,
+  "stdout_bytes": 0,
+  "stderr_bytes": 0,
+  "rejected": true,
+  "rejection_reason": "Bridge is busy executing 'run_tests'. Retry after it completes."
 }
 ```
 
@@ -336,6 +368,15 @@ server.py
 │
 ├── Models (§6.1 above)
 │
+├── Concurrency guard
+│   An asyncio.Lock held during command execution.
+│   Tool handlers acquire non-blocking (trylock pattern).
+│   If the lock is held, immediately return isError with
+│   the name of the in-progress command and a retry message.
+│   The currently executing command name is tracked in a
+│   module-level variable set before acquire and cleared
+│   after release.
+│
 ├── load_config() → BridgeConfig
 │   Read BRIDGE_* env vars, return validated config.
 │
@@ -362,12 +403,16 @@ server.py
 │
 ├── Tool handler functions
 │   One handler registered per tool name. Each handler:
+│   0. Try to acquire concurrency lock (non-blocking).
+│      If busy → log rejection, return isError with
+│      retry message naming the in-progress command.
 │   1. Extracts args from tool input (if schema allows)
 │   2. Validates args
 │   3. Calls execute_command → CommandResult
 │   4. Constructs LogEntry (including full stdout/stderr),
 │      calls log_request
-│   5. Returns MCP tool result:
+│   5. Releases concurrency lock
+│   6. Returns MCP tool result:
 │      content=result.model_dump_json(), isError=False
 │      or error message string, isError=True
 │

@@ -50,7 +50,7 @@ The human operator bypasses the bridge entirely, using `make` targets that `dock
 
 ## 2. Bridge Server Components
 
-The server is a single Python file (`server.py`) using the MCP Python SDK for the transport layer, pydantic for data validation and serialization, and Python stdlib for command execution. It has five internal responsibilities:
+The server is a single Python file (`server.py`) using the MCP Python SDK for the transport layer, pydantic for data validation and serialization, and Python stdlib for command execution. It has six internal responsibilities:
 
 ### 2.1 MCP Tool Provider
 
@@ -62,21 +62,25 @@ Tool schemas are derived from the whitelist:
 - Commands with `allow_extra_args: true` get an input schema with an optional `args` array parameter.
 - Commands with `allow_extra_args: false` get an input schema with no parameters. The protocol-level constraint prevents the Controller from sending arguments.
 
-### 2.2 Whitelist Loader
+### 2.2 Concurrency Guard
+
+An `asyncio.Lock` that ensures only one command executes at a time. Each tool handler attempts a non-blocking acquire before execution. If the lock is already held, the handler immediately returns an `isError: true` result naming the in-progress command and telling the client to retry. The currently executing command name is tracked in a module-level variable, set on acquire and cleared on release. No queuing or blocking — rejection is instantaneous.
+
+### 2.3 Whitelist Loader
 
 Reads `commands.json` once at startup and validates it against pydantic models (`CommandsConfig` containing `CommandEntry` instances). The config includes a global `default_timeout` and per-command entries that may override it. Invalid config — missing fields, wrong types, empty command arrays — fails with pydantic's field-level error messages and exits the server immediately. There is no hot-reload — changing the whitelist requires a container restart.
 
-### 2.3 Executor
+### 2.4 Executor
 
 Resolves a command name to its whitelist entry, constructs the full argument vector (executable prefix + optional caller args), and calls `subprocess.run` with `shell=False`, `capture_output=True`, `text=True`, the command's effective timeout, and `cwd` from the whitelist entry. Returns a typed `CommandResult` (stdout, stderr, exit_code). Catches `subprocess.TimeoutExpired` and `FileNotFoundError` and translates them to MCP tool errors.
 
-### 2.4 Argument Validator
+### 2.5 Argument Validator
 
 A pure function called before execution. Checks that all caller-provided arguments are strings and do not contain shell metacharacters. This is defense-in-depth — `shell=False` already prevents injection — but rejects clearly malformed input early with a descriptive error.
 
-### 2.5 Request Logger
+### 2.6 Request Logger
 
-Constructs a `LogEntry` pydantic model per tool invocation and appends its JSON serialization (`model_dump_json()`) as a single line to a JSONL log file. Each entry includes full request and response payloads (command, args, stdout, stderr) alongside metadata (timestamp, exit code, duration, byte lengths, rejection status). This provides a complete audit trail for debugging and analysis.
+Constructs a `LogEntry` pydantic model per tool invocation and appends its JSON serialization (`model_dump_json()`) as a single line to a JSONL log file. Each entry includes full request and response payloads (command, args, stdout, stderr) alongside metadata (timestamp, exit code, duration, byte lengths, rejection status). This provides a complete audit trail for debugging and analysis. Concurrency rejections are logged with a "busy" rejection reason.
 
 The logger opens and closes the file per write (append mode) to avoid holding file handles and to ensure log entries are flushed even if the server crashes.
 
@@ -99,6 +103,9 @@ Controller (CC)                   Bridge MCP Server                subprocess
     │  name:"run_tests"                │                               │
     │  args:["--tb=short"]             │                               │
     │─────────────────────────────────▶│                               │
+    │                                  │  0. Acquire concurrency lock  │
+    │                                  │     (non-blocking; if busy    │
+    │                                  │      → reject immediately)    │
     │                                  │  1. Look up "run_tests"       │
     │                                  │     in whitelist               │
     │                                  │  2. Validate args             │
@@ -113,13 +120,14 @@ Controller (CC)                   Bridge MCP Server                subprocess
     │                                  │  stdout, stderr, returncode  │
     │                                  │◀─────────────────────────────│
     │                                  │  5. Log full result (JSONL)  │
-    │                                  │  6. Return tool result       │
+    │                                  │  6. Release concurrency lock │
+    │                                  │  7. Return tool result       │
     │  content: [{text: JSON of        │                               │
     │    stdout, stderr, exit_code}]   │                               │
     │◀─────────────────────────────────│                               │
 ```
 
-Error paths short-circuit at the relevant step: unknown command at step 1 (tool not found), metacharacter rejection at step 2, timeout or exec failure at step 4. All error paths still log (step 5) with the rejection reason. Bridge-level errors set `isError: true` in the MCP tool result.
+Error paths short-circuit at the relevant step: busy at step 0, unknown command at step 1, metacharacter rejection at step 2, timeout or exec failure at step 4. All paths log (step 5) and release the lock (step 6, via finally/context manager). Bridge-level errors set `isError: true` in the MCP tool result.
 
 ---
 
@@ -235,7 +243,7 @@ The bridge's security posture is designed for a trusted dev-only network, not ho
 ## 8. Constraints and Dependencies
 
 - **Python MCP SDK + pydantic.** The server depends on the `mcp` package (which transitively installs pydantic, starlette, uvicorn). The bridge imports from both `mcp` and `pydantic` directly. Dependencies are declared in `requirements.txt` and installed in the dev Docker stage. See ADR 002 for rationale.
-- **Single-threaded tool execution.** One command at a time. The MCP SDK may handle concurrent transport-level requests, but tool execution is serialized. Sufficient for sequential dev tool invocations.
+- **Serialized tool execution.** One command at a time, enforced by an `asyncio.Lock`. Concurrent requests are rejected immediately with a retry message — no queuing, no blocking. This prevents subprocess resource contention and keeps the execution model predictable.
 - **No hot-reload.** Whitelist changes require a container restart. This prevents runtime config mutation.
 - **Docker required.** The bridge assumes it runs inside a Docker container on a Docker bridge network. It has no standalone mode.
 - **Consumer provides the Dockerfile.** The bridge project ships `server.py` and `requirements.txt`. The consumer project owns the Dockerfile, compose files, whitelist, MCP registration, and all integration wiring.

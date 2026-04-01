@@ -36,21 +36,25 @@ Legend:
 
 ---
 
-## Phase 1 — Command Execution
+## Phase 1 — Command Execution and Concurrency Guard
 
-**Goal:** Tool calls resolve command names, validate arguments, run subprocesses with per-command timeouts, and return `CommandResult` as structured MCP tool results. All error paths return proper MCP tool errors.
+**Goal:** Tool calls resolve command names, validate arguments, run subprocesses with per-command timeouts, and return `CommandResult` as structured MCP tool results. Concurrent calls are rejected with a retry message. All error paths return proper MCP tool errors.
 
-### 1.1 — Argument validator
+### 1.1 — Concurrency guard
+- [ ] Implement an `asyncio.Lock`-based concurrency guard per SPECS.md §6.2 and REQUIREMENTS.md §4.6. Track the currently executing command name in a module-level variable. Tool handlers attempt non-blocking acquire; if the lock is held, immediately return `isError: true` with a message naming the in-progress command and telling the client to retry.
+- [ ] **Verify:** Start the server with a command that sleeps for 5 seconds (e.g., `["sleep", "5"]`). Call the sleep tool, then immediately call another tool. Confirm the second call returns `isError: true` with a message like `"Bridge is busy executing 'sleep_cmd'. Retry after it completes."` Confirm the first call completes normally after the sleep.
+
+### 1.2 — Argument validator
 - [ ] Implement `validate_args(args)` per SPECS.md §3: type check (all strings), metacharacter blocklist scan. Returns `None` if valid, error message string if invalid.
 - [ ] **Verify:** Call directly in a Python REPL. `validate_args(["--tb=short"])` → `None`. `validate_args(["--flag; rm -rf /"])` → error string. `validate_args([123])` → error string.
 
-### 1.2 — Executor
+### 1.3 — Executor
 - [ ] Implement `execute_command(name, args, config)` per SPECS.md §6.2: whitelist lookup, `subprocess.run` with `shell=False`, `capture_output=True`, `text=True`, `config.effective_timeout(name)`, `cwd`. Return `CommandResult` model.
 - [ ] Raise appropriate exceptions for timeout and file-not-found.
 - [ ] **Verify:** With a test `commands.json` containing an `echo` command (`["echo", "hello"]`, `allow_extra_args: true`, no per-command timeout), call `execute_command("echo", ["world"], config)` directly. Confirm returned `CommandResult` has `stdout="hello world\n"`, `exit_code=0`. Verify that a command with a 1-second timeout and a `sleep 5` target raises `TimeoutExpired`.
 
-### 1.3 — Wire executor into tool handlers
-- [ ] Implement tool handler functions that: extract `args` from tool input (if schema allows), call `validate_args`, call `execute_command`, return MCP tool result per SPECS.md §1.3. Success result text is `CommandResult.model_dump_json()`.
+### 1.4 — Wire executor into tool handlers
+- [ ] Implement tool handler functions that: acquire concurrency lock (reject if busy), extract `args` from tool input (if schema allows), call `validate_args`, call `execute_command`, release lock (via finally). Return MCP tool result per SPECS.md §1.3. Success result text is `CommandResult.model_dump_json()`.
 - [ ] Non-zero subprocess exit codes → `isError: false` (faithful reporting).
 - [ ] Argument validation failure → `isError: true`.
 - [ ] Timeout → `isError: true` with timeout message including the effective timeout value.
@@ -62,15 +66,15 @@ Legend:
 
 ## Phase 2 — Request Logging
 
-**Goal:** Every tool invocation (successful or rejected) is logged to a JSONL file with full request/response payloads per SPECS.md §4.
+**Goal:** Every tool invocation (successful, rejected, or busy) is logged to a JSONL file with full request/response payloads per SPECS.md §4.
 
 ### 2.1 — Implement log_request
 - [ ] Implement `log_request(entry: LogEntry, log_dir, log_file)`: append `entry.model_dump_json()` + newline to log file. Create log directory if it does not exist.
 - [ ] **Verify:** After a few tool calls via MCP Inspector, inspect the log file. Confirm each line is valid JSON with all expected fields matching `LogEntry` schema. Confirm full stdout/stderr content is present. Confirm rejected requests have `rejected: true`, a reason, and null stdout/stderr.
 
 ### 2.2 — Integrate logging into tool handlers
-- [ ] Construct `LogEntry` at the end of every tool handler path (both success and error), including full stdout/stderr content from `CommandResult`. Capture wall-clock duration using `time.monotonic()` around the execution call.
-- [ ] **Verify:** Send a successful tool call and a rejected tool call. Confirm both produce log entries. Confirm `duration_ms` is non-zero for executed commands and zero for rejected requests.
+- [ ] Construct `LogEntry` at the end of every tool handler path (success, error, and busy rejection), including full stdout/stderr content from `CommandResult` where applicable. Capture wall-clock duration using `time.monotonic()` around the execution call.
+- [ ] **Verify:** Send a successful tool call, a rejected tool call (bad args), and a busy rejection (concurrent call). Confirm all three produce log entries with correct `rejected` and `rejection_reason` values. Confirm `duration_ms` is non-zero for executed commands and zero for rejected/busy requests.
 
 ---
 
@@ -101,6 +105,4 @@ Legend:
 ## Deferred
 
 - **Configurable payload logging:** Add `BRIDGE_LOG_PAYLOADS` env var (default: true) to allow disabling stdout/stderr content in logs for high-throughput environments.
-- **Bridge test suite:** Unit tests for server.py (arg validation, config loading, executor, tool schema generation, pydantic model validation). Not blocking MVP — the bridge is verified through MCP Inspector testing and through the consumer project's test suite running over it.
 - **Structured stderr logging:** The server could emit structured JSON to stderr for container log aggregation.
-- **Concurrent tool execution:** The MCP SDK supports async, but tool execution is serialized. If concurrent execution becomes needed, the executor could use `asyncio.to_thread`.

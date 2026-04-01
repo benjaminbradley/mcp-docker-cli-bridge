@@ -90,8 +90,17 @@ The bridge must return structured errors for:
 - Argument validation failure → MCP tool error with the rejected argument.
 - Command timeout → MCP tool error with timeout duration and any partial output.
 - Subprocess failure (e.g., executable not found) → MCP tool error.
+- Concurrent execution attempt → MCP tool error identifying the currently running command. The client should retry after the in-progress command completes.
 
 MCP tool errors use the `isError` flag in tool results. Connection-level errors (server unreachable, malformed protocol messages) are handled by the MCP transport layer.
+
+### 4.6 Concurrency Guard
+
+The bridge must execute only one command at a time. If a tool call arrives while another command is already running, the bridge must immediately reject the new request with an MCP tool error that:
+- Identifies the currently executing command by name.
+- Signals that the client should retry after the in-progress command completes.
+
+The bridge must not queue, block, or wait on concurrent requests. Rejection is immediate and non-blocking. The rejected request is logged with the appropriate rejection reason.
 
 ---
 
@@ -203,8 +212,8 @@ The bridge must be usable across multiple CLI-based Docker projects without modi
 ## 10. Non-Requirements (Explicit Exclusions)
 
 - **Authentication/authorization** beyond the command whitelist. The bridge is accessible only within the Docker network, which is sufficient for the dev use case.
-- **Concurrent request handling.** The bridge processes one request at a time. Dev tool invocations are sequential (run lint, then test, then typecheck). If concurrency becomes needed, it is a future enhancement.
 - **HTTPS/TLS.** Traffic is container-to-container on an isolated Docker network.
 - **Persistent state.** The bridge is stateless (aside from the append-only log file). No database, no session tracking.
 - **File transfer.** The bridge does not upload or download files. The Controller and Target share access to source files via their respective volume mounts.
 - **MCP resources or prompts.** The bridge exposes only MCP tools. It does not serve MCP resources (file content) or prompts (templated interactions).
+- **Concurrent execution.** The bridge explicitly prevents concurrent command execution (see §4.6). Queuing or parallel execution are not supported.
