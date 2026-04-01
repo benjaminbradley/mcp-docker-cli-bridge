@@ -4,6 +4,8 @@ import os
 import sys
 from datetime import datetime
 
+from mcp.server.fastmcp import FastMCP
+from mcp.types import Tool
 from pydantic import BaseModel, field_validator
 
 
@@ -110,6 +112,64 @@ def load_commands(path: str) -> CommandsConfig:
 
 
 # ---------------------------------------------------------------------------
+# Tool builder
+# ---------------------------------------------------------------------------
+
+
+def build_tools(config: CommandsConfig) -> list[Tool]:
+    """Generate MCP Tool definitions from CommandsConfig."""
+    tools = []
+    for name, entry in config.commands.items():
+        description = "Execute: " + " ".join(entry.command)
+        if entry.allow_extra_args:
+            input_schema = {
+                "type": "object",
+                "properties": {
+                    "args": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                        "description": "Additional arguments appended to the command",
+                    }
+                },
+            }
+        else:
+            input_schema = {
+                "type": "object",
+                "properties": {},
+            }
+        tools.append(Tool(name=name, description=description, inputSchema=input_schema))
+    return tools
+
+
+# ---------------------------------------------------------------------------
+# MCP server registration
+# ---------------------------------------------------------------------------
+
+
+def _register_tools(mcp: FastMCP, commands: CommandsConfig) -> None:
+    """Register one MCP tool per whitelist entry. Handler bodies filled in task 1.4."""
+    for name, entry in commands.commands.items():
+        description = "Execute: " + " ".join(entry.command)
+
+        if entry.allow_extra_args:
+            def _make_handler_with_args(cmd_name: str):
+                async def handler(args: list[str] | None = None) -> str:
+                    # Full implementation in task 1.4
+                    return f"Not yet implemented: {cmd_name}"
+                handler.__name__ = cmd_name
+                return handler
+            mcp.add_tool(_make_handler_with_args(name), name=name, description=description)
+        else:
+            def _make_handler_no_args(cmd_name: str):
+                async def handler() -> str:
+                    # Full implementation in task 1.4
+                    return f"Not yet implemented: {cmd_name}"
+                handler.__name__ = cmd_name
+                return handler
+            mcp.add_tool(_make_handler_no_args(name), name=name, description=description)
+
+
+# ---------------------------------------------------------------------------
 # Entry point
 # ---------------------------------------------------------------------------
 
@@ -125,7 +185,9 @@ def main() -> None:
     print(f"Bridge listening on {config.host}:{config.port}")
     print(f"Loaded {len(commands.commands)} commands: {cmd_summary}")
 
-    # MCP server tool registration and transport startup added in task 0.3.
+    mcp = FastMCP("bridge")
+    _register_tools(mcp, commands)
+    mcp.run(transport="streamable-http", host=config.host, port=config.port)
 
 
 if __name__ == "__main__":
