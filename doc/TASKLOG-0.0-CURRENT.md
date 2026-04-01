@@ -94,3 +94,18 @@
 **Lessons:** None to defer.
 
 ---
+
+## Task 0.3: Tool registration and tools/list
+**Status:** 🔄 In Progress
+**Started:** 2026-04-01
+
+### Mini-Plan
+- **Goal:** `TestBuildTools` passes; `make up` + MCP Inspector confirms `tools/list` returns correct schemas.
+- **Approach:**
+  - RED: add `TestBuildTools` to `tests/test_server.py`; confirm `ImportError` on `build_tools`
+  - GREEN: add `build_tools(config) -> list[Tool]` to `server.py`; update `main()` to create a `FastMCP` server, register dynamic handler stubs (execution wired in 1.4), and run with `transport="streamable-http"`
+  - REFACTOR: N/A expected
+- **Tests:** 5 tests in `TestBuildTools` — count, name, args-schema, empty-schema, description format
+- **Files:** `server.py` (modify), `tests/test_server.py` (modify)
+
+---
