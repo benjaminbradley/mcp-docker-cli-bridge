@@ -1,6 +1,8 @@
 """MCP Docker CLI Bridge — exposes whitelisted CLI commands as MCP tools."""
+import asyncio
 import json
 import os
+import subprocess
 import sys
 from datetime import datetime
 
@@ -77,6 +79,13 @@ class BridgeConfig(BaseModel):
 
 
 # ---------------------------------------------------------------------------
+# Concurrency state
+# ---------------------------------------------------------------------------
+
+_lock: asyncio.Lock = asyncio.Lock()
+_current_command: str | None = None
+
+# ---------------------------------------------------------------------------
 # Config and command loaders
 # ---------------------------------------------------------------------------
 
@@ -109,6 +118,45 @@ def load_commands(path: str) -> CommandsConfig:
     except Exception as e:
         print(f"Error: invalid commands config in {path}:\n{e}", file=sys.stderr)
         sys.exit(1)
+
+
+# ---------------------------------------------------------------------------
+# Argument validator
+# ---------------------------------------------------------------------------
+
+BLOCKED_SEQUENCES = [";", "&&", "||", "|", "`", "$(", ">", "<"]
+
+
+def validate_args(args: list) -> str | None:
+    """Return None if args are valid, or an error message string if invalid."""
+    for arg in args:
+        if not isinstance(arg, str):
+            return f"Argument must be a string, got {type(arg).__name__}: {arg!r}"
+        for seq in BLOCKED_SEQUENCES:
+            if seq in arg:
+                return f"Argument contains disallowed characters: {arg!r}"
+    return None
+
+
+# ---------------------------------------------------------------------------
+# Executor
+# ---------------------------------------------------------------------------
+
+
+def execute_command(name: str, args: list[str], config: CommandsConfig) -> CommandResult:
+    """Run the whitelisted command and return its result. Raises on timeout or missing executable."""
+    entry = config.commands[name]
+    argv = entry.command + args
+    timeout = config.effective_timeout(name)
+    result = subprocess.run(
+        argv,
+        shell=False,
+        capture_output=True,
+        text=True,
+        timeout=timeout,
+        cwd=entry.cwd,
+    )
+    return CommandResult(stdout=result.stdout, stderr=result.stderr, exit_code=result.returncode)
 
 
 # ---------------------------------------------------------------------------
@@ -146,27 +194,57 @@ def build_tools(config: CommandsConfig) -> list[Tool]:
 # ---------------------------------------------------------------------------
 
 
+def _create_tool_handler(name: str, commands: CommandsConfig):
+    """Return an async handler function for the named command."""
+    entry = commands.commands[name]
+
+    async def _run(args: list[str]) -> str:
+        global _current_command
+        if _lock.locked():
+            busy = _current_command
+            raise Exception(
+                f"Bridge is busy executing '{busy}'. Retry after it completes."
+            )
+        await _lock.acquire()
+        _current_command = name
+        try:
+            if err := validate_args(args):
+                raise Exception(err)
+            try:
+                result = execute_command(name, args, commands)
+                return result.model_dump_json()
+            except subprocess.TimeoutExpired:
+                raise Exception(
+                    f"Command '{name}' timed out after {commands.effective_timeout(name)}s"
+                )
+            except FileNotFoundError:
+                raise Exception(
+                    f"Command '{name}' executable not found: {entry.command[0]!r}"
+                )
+        finally:
+            _current_command = None
+            _lock.release()
+
+    if entry.allow_extra_args:
+        async def handler_with_args(args: list[str] | None = None) -> str:
+            return await _run(args or [])
+
+        handler_with_args.__name__ = name
+        return handler_with_args
+    else:
+        async def handler_no_args() -> str:
+            return await _run([])
+
+        handler_no_args.__name__ = name
+        return handler_no_args
+
+
 def _register_tools(mcp: FastMCP, commands: CommandsConfig) -> None:
-    """Register one MCP tool per whitelist entry. Handler bodies filled in task 1.4."""
+    """Register one MCP tool per whitelist entry."""
     for name, entry in commands.commands.items():
         description = "Execute: " + " ".join(entry.command)
-
-        if entry.allow_extra_args:
-            def _make_handler_with_args(cmd_name: str):
-                async def handler(args: list[str] | None = None) -> str:
-                    # Full implementation in task 1.4
-                    return f"Not yet implemented: {cmd_name}"
-                handler.__name__ = cmd_name
-                return handler
-            mcp.add_tool(_make_handler_with_args(name), name=name, description=description)
-        else:
-            def _make_handler_no_args(cmd_name: str):
-                async def handler() -> str:
-                    # Full implementation in task 1.4
-                    return f"Not yet implemented: {cmd_name}"
-                handler.__name__ = cmd_name
-                return handler
-            mcp.add_tool(_make_handler_no_args(name), name=name, description=description)
+        handler = _create_tool_handler(name, commands)
+        mcp.add_tool(handler, name=name, description=description)
 
 
 # ---------------------------------------------------------------------------
@@ -185,9 +263,9 @@ def main() -> None:
     print(f"Bridge listening on {config.host}:{config.port}")
     print(f"Loaded {len(commands.commands)} commands: {cmd_summary}")
 
-    mcp = FastMCP("bridge")
+    mcp = FastMCP("bridge", host=config.host, port=config.port)
     _register_tools(mcp, commands)
-    mcp.run(transport="streamable-http", host=config.host, port=config.port)
+    mcp.run(transport="streamable-http")
 
 
 if __name__ == "__main__":
