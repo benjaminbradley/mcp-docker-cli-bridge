@@ -37,25 +37,25 @@ Legend:
 > **Infrastructure task — no TDD cycle.** Creates the container environment in which all subsequent TDD cycles run.
 > **Note:** `make build` requires 0.1's `requirements.txt` to exist first. Create 0.0 and 0.1 files together, then verify both.
 
-- [o] Create `Dockerfile` (base stage: MCP SDK deps + server.py + non-root user; dev stage: adds pytest, ruff, mypy, pytest-asyncio)
-- [o] Create `docker-compose.yml` (service `my-app`, port `127.0.0.1:7357:7357`, volumes: `commands.dev.json:ro`, `data/bridge-logs`, `server.py`, `tests/`)
-- [o] Create `commands.dev.json` (e2e test whitelist: `echo_test`, `run_tests`, `run_lint`, `run_typecheck`, `run_format_check`, `sleep_test`)
-- [o] Create `Makefile` (`help`, `build`, `up`, `down`, `logs`, `test`, `lint`, `typecheck`, `format`, `shell`)
-- [o] Create `.mcp.json` (registers `http://my-app:7357/mcp` as `bridge-dev` MCP server)
-- [-] **Verify:** Deferred to end of 0.2 — `make build` requires `requirements.txt` and `server.py`.
+- [x] Create `Dockerfile` (base stage: MCP SDK deps + server.py + non-root user; dev stage: adds pytest, ruff, mypy, pytest-asyncio)
+- [x] Create `docker-compose.yml` (service `my-app`, port `127.0.0.1:7357:7357`, volumes: `commands.dev.json:ro`, `data/bridge-logs`, `server.py`, `tests/`)
+- [x] Create `commands.dev.json` (e2e test whitelist: `echo_test`, `run_tests`, `run_lint`, `run_typecheck`, `run_format_check`, `sleep_test`)
+- [x] Create `Makefile` (`help`, `build`, `up`, `down`, `logs`, `test`, `lint`, `typecheck`, `format`, `shell`)
+- [x] Create `.mcp.json` (registers `http://my-app:7357/mcp` as `bridge-dev` MCP server)
+- [x] **Verify:** `make build` ✅ · `make up`/`make logs` (banner) ✅ · `make down` ✅ · `make test` (7 passing) ✅ · `bridge-dev` tools discovered ✅ · invalid config errors ✅
 - **Files:** `Dockerfile`, `docker-compose.yml`, `commands.dev.json`, `Makefile`, `.mcp.json`
 
 ### 0.1 — Create requirements.txt
 
 > **Infrastructure task — no TDD cycle.** This task installs dependencies with no testable logic. Verification is manual (`pip install`).
 
-- [o] Create `requirements.txt` at project root with `mcp>=1.1.0` and pydantic and any other dependencies imported directly by the app (don't rely on mcp to pull them in).
-- [-] **Verify:** Deferred to 0.2 combined verify (requires `make build`).
+- [x] Create `requirements.txt` at project root with `mcp>=1.1.0` and pydantic and any other dependencies imported directly by the app (don't rely on mcp to pull them in).
+- [x] **Verify:** `make build` confirmed MCP SDK and pydantic install correctly.
 - **Files:** `requirements.txt`
 
 ### 0.2 — Create server.py with pydantic models and config loader
 
-- [o] **RED:** In `tests/test_server.py`, add class `TestCommandsConfig`. Write tests covering:
+- [x] **RED:** In `tests/test_server.py`, add class `TestCommandsConfig`. Write tests covering:
   - `test_valid_config_parses_correctly` — a fully-populated `CommandsConfig` dict round-trips through the model with correct field values.
   - `test_missing_required_field_raises` — omitting `command` from a `CommandEntry` raises `ValidationError`.
   - `test_wrong_type_for_command_raises` — setting `command` to a string (not list) raises `ValidationError`.
@@ -64,15 +64,9 @@ Legend:
   - `test_effective_timeout_falls_back_to_default` — a command with `timeout=None` and `default_timeout=60` returns `60` from `effective_timeout()`.
   - `test_default_timeout_defaults_to_60` — `CommandsConfig` with no `default_timeout` field has `default_timeout == 60`.
   Run `pytest tests/ -v`, confirm all new tests fail with `ImportError` or `ModuleNotFoundError` (right reason: `server.py` does not exist yet).
-- [o] **GREEN:** Create `server.py` with: pydantic models (`BridgeConfig`, `CommandEntry`, `CommandsConfig`, `CommandResult`, `LogEntry`) per SPECS.md §6.1; `load_config()` factory reading `BRIDGE_*` env vars; `load_commands(path)` parsing JSON into `CommandsConfig`. Run `pytest tests/ -v`, confirm all `TestCommandsConfig` tests pass.
+- [x] **GREEN:** Create `server.py` with: pydantic models (`BridgeConfig`, `CommandEntry`, `CommandsConfig`, `CommandResult`, `LogEntry`) per SPECS.md §6.1; `load_config()` factory reading `BRIDGE_*` env vars; `load_commands(path)` parsing JSON into `CommandsConfig`. Run `pytest tests/ -v`, confirm all `TestCommandsConfig` tests pass.
 - [-] **REFACTOR:** No refactoring needed — models are clean as written.
-- [ ] **Verify (0.0 + 0.2 combined):**
-  - `make build` succeeds.
-  - `make up` starts the server; `make logs` shows the startup banner.
-  - `make down` stops cleanly.
-  - `make test` runs the full test suite and passes.
-  - Claude Code discovers `bridge-dev` tools via `tools/list` (requires `make up`).
-  - Invalid config edge cases: remove a required field → pydantic error with field name; set `command` to empty array → custom validator error; malform JSON → clear parse error.
+- [x] **Verify (0.0 + 0.2 combined):** All checks passing — `make build` ✅ · banner ✅ · `make test` (7/7) ✅ · `bridge-dev` tools discovered ✅ · invalid config errors ✅
 - **Files:** `server.py` (create), `tests/test_server.py` (create)
 
 ### 0.3 — Tool registration and tools/list

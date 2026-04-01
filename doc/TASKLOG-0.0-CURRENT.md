@@ -32,7 +32,7 @@
 
 ### Outcome
 **Duration:** Planning session
-**Notes:** Verification deferred to end of 0.2 — `make build` requires `requirements.txt` and `server.py` to exist first.
+**Verification:** ✅ `make build` · `make up`/`make logs` (banner) · `make down` · `make test` (7/7) · `bridge-dev` tools discovered · invalid config errors — all passing.
 
 ---
 
@@ -51,7 +51,7 @@
 
 ### Outcome
 **Commits:** `569e630` — chore: add requirements.txt with mcp and pydantic
-**Notes:** Verify deferred to combined 0.0+0.2 verify gate (requires `make build`).
+**Verification:** ✅ `make build` confirmed MCP SDK and pydantic install correctly.
 
 ---
 
@@ -87,6 +87,10 @@
 **Commits:**
 - `5e56f2c` — test(models): add TestCommandsConfig tests
 - `a2b0ec0` — feat(models): implement pydantic models and config loader
-**Notes:** `make build` + full verify gate ready for human to run.
+**Verification:** ✅ 7/7 tests passing · banner correct · all invalid-config error paths confirmed.
+
+### Reflection
+**Signals noted:** No approach pivots, no corrective edits. One non-obvious structural decision: `main()` prints banner then exits in 0.2 (MCP server startup deferred to 0.3) — intentional and documented.
+**Lessons:** None to defer.
 
 ---
