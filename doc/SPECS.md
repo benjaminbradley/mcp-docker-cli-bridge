@@ -1,107 +1,127 @@
 # Specifications — Docker CLI Access Bridge
 
 > **Status:** Approved
-> **Last updated:** 2026-03-31
-> **References:** [Requirements](REQUIREMENTS.md) · [Architecture](ARCHITECTURE.md)
+> **Last updated:** 2026-04-01
+> **References:** [Requirements](REQUIREMENTS.md) · [Architecture](ARCHITECTURE.md) · [ADR 001](adr/001-mcp-transport.md)
 
 ---
 
-## 1. Server API
+## 1. MCP Server Interface
 
-### 1.1 Endpoint
+### 1.1 Transport
+
+The bridge uses Streamable HTTP transport as defined by MCP spec version 2025-03-26. The server exposes a single MCP endpoint:
 
 ```
-POST /execute
-Content-Type: application/json
+POST /mcp
+GET  /mcp   (for SSE streaming, if needed by client)
 ```
 
-All other paths return HTTP 404 with `{"error": "Not found"}`. All methods other than POST return HTTP 405 with `{"error": "Method not allowed"}`.
+The MCP Python SDK handles protocol negotiation, JSON-RPC framing, and session management. The bridge code registers tools and handles tool calls; the SDK handles everything else.
 
-### 1.2 Request Schema
+### 1.2 Tool Discovery (tools/list)
+
+On `tools/list`, the server returns one tool per whitelist entry. Tool definitions are generated dynamically from `commands.json` at startup.
+
+Example response (for a whitelist with three commands):
 
 ```json
 {
-  "command": "run_tests",
-  "args": ["--tb=short", "-x"]
+  "tools": [
+    {
+      "name": "run_tests",
+      "description": "Execute: python -m pytest src/tests/ -v",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "args": {
+            "type": "array",
+            "items": {"type": "string"},
+            "description": "Additional arguments appended to the command"
+          }
+        }
+      }
+    },
+    {
+      "name": "run_lint",
+      "description": "Execute: python -m ruff check src/",
+      "inputSchema": {
+        "type": "object",
+        "properties": {}
+      }
+    },
+    {
+      "name": "run_typecheck",
+      "description": "Execute: python -m mypy src/findworkbot/",
+      "inputSchema": {
+        "type": "object",
+        "properties": {}
+      }
+    }
+  ]
 }
 ```
 
-- `command` (string, required): Name matching a key in the command whitelist.
-- `args` (array of strings, optional): Additional arguments appended to the command's executable prefix. Defaults to `[]` if omitted.
+Key behaviors:
+- Commands with `allow_extra_args: true` include an `args` property in the schema.
+- Commands with `allow_extra_args: false` have an empty `properties` object — no `args` parameter is exposed.
+- The `description` is auto-generated from the executable prefix: `"Execute: "` + the command array joined by spaces.
 
-### 1.3 Success Response
+### 1.3 Tool Invocation (tools/call)
 
-HTTP 200:
-
+**Request** (MCP JSON-RPC, handled by SDK):
 ```json
 {
-  "stdout": "===== 68 passed in 2.31s =====\n",
-  "stderr": "",
-  "exit_code": 0
+  "name": "run_tests",
+  "arguments": {
+    "args": ["--tb=short", "-x"]
+  }
 }
 ```
 
-- `stdout` (string): Captured standard output.
-- `stderr` (string): Captured standard error.
-- `exit_code` (integer): Process return code.
-
-A non-zero `exit_code` is still HTTP 200 — the bridge faithfully reports what the subprocess returned. HTTP status codes reflect bridge-level errors, not subprocess outcomes.
-
-### 1.4 Error Responses
-
-All error responses include an `error` field with a human-readable message. Fields that don't apply are omitted (not set to null).
-
-**Unknown command** — HTTP 400:
+**Success result** (subprocess completed, any exit code):
 ```json
 {
-  "error": "Unknown command: 'deploy'",
-  "available_commands": ["run_tests", "run_lint", "run_typecheck"]
+  "content": [
+    {
+      "type": "text",
+      "text": "{\"stdout\": \"===== 68 passed in 2.31s =====\\n\", \"stderr\": \"\", \"exit_code\": 0}"
+    }
+  ],
+  "isError": false
 }
 ```
 
-**Extra args not allowed** — HTTP 400:
+The `text` field contains a JSON-encoded object with `stdout`, `stderr`, and `exit_code`. Non-zero exit codes still produce `isError: false` — the bridge faithfully reports what the subprocess returned.
+
+**Error result** (bridge-level failure):
 ```json
 {
-  "error": "Command 'run_lint' does not allow extra arguments"
+  "content": [
+    {
+      "type": "text",
+      "text": "Command 'run_tests' timed out after 60s"
+    }
+  ],
+  "isError": true
 }
 ```
 
-**Argument validation failure** — HTTP 400:
-```json
-{
-  "error": "Argument contains disallowed characters: '--flag; rm -rf /'"
-}
-```
+Bridge-level errors that set `isError: true`:
+- Argument validation failure (metacharacter detected).
+- Command timeout (`subprocess.TimeoutExpired`).
+- Subprocess execution failure (`FileNotFoundError` — executable not found).
+- Unknown tool name (should not normally occur since `tools/list` advertises only valid tools, but handled defensively).
 
-**Malformed JSON** — HTTP 400:
-```json
-{
-  "error": "Invalid JSON in request body"
-}
-```
+### 1.4 Unsupported MCP Features
 
-**Missing command field** — HTTP 400:
-```json
-{
-  "error": "Missing required field: 'command'"
-}
-```
+The bridge does not implement:
+- **Resources** — no file serving.
+- **Prompts** — no templated interactions.
+- **Sampling** — no LLM request forwarding.
+- **Resource subscriptions** — no change notifications.
 
-**Command timeout** — HTTP 504:
-```json
-{
-  "error": "Command 'run_tests' timed out after 60s",
-  "stdout": "(partial output if captured)",
-  "stderr": "(partial output if captured)"
-}
-```
-
-**Subprocess failure** (e.g., executable not found) — HTTP 500:
-```json
-{
-  "error": "Failed to execute command 'run_tests': [Errno 2] No such file or directory: 'pythonn'"
-}
-```
+Requests for these capabilities receive standard MCP "method not found" responses from the SDK.
 
 ---
 
@@ -139,7 +159,7 @@ A JSON object where each key is a command name and each value is a command defin
 ### 2.2 Command Definition Fields
 
 - `command` (array of strings, required): The executable prefix. First element is the executable; remaining elements are fixed arguments. The array is passed directly to `subprocess.run` as the start of the argv list.
-- `allow_extra_args` (boolean, required): When `true`, caller-provided `args` are appended to the `command` array. When `false`, any `args` in the request trigger an error.
+- `allow_extra_args` (boolean, required): When `true`, the MCP tool schema includes an `args` parameter and caller-provided args are appended to the `command` array. When `false`, the tool schema has no `args` parameter.
 - `cwd` (string, required): Absolute path to the working directory for subprocess execution.
 
 ### 2.3 Validation at Startup
@@ -152,7 +172,7 @@ The server validates the whitelist on startup and exits with a non-zero exit cod
 - `allow_extra_args` is not a boolean.
 - `cwd` is not a string.
 
-The server logs the number of commands loaded on successful startup.
+The server logs the number of commands loaded and their names on successful startup.
 
 ---
 
@@ -164,11 +184,11 @@ The following characters and sequences are rejected in any caller-provided argum
 
 `;`, `&&`, `||`, `|`, `` ` ``, `$(`, `)` (when preceded by `$(`), `>`, `<`
 
-Rejection is by substring match. If any argument contains a blocked sequence, the entire request is rejected with HTTP 400 before execution.
+Rejection is by substring match. If any argument contains a blocked sequence, the tool call returns `isError: true` before execution.
 
 ### 3.2 Type Validation
 
-Each element in the `args` array must be a JSON string. Non-string types (numbers, booleans, objects, arrays, null) are rejected with HTTP 400.
+Each element in the `args` array must be a JSON string. The MCP tool schema declares `"items": {"type": "string"}`, so the SDK may enforce this at the protocol level. The validator provides defense-in-depth for cases where schema validation is bypassed.
 
 ---
 
@@ -186,7 +206,7 @@ One JSON object per line, no trailing comma, newline-terminated.
 
 ```json
 {
-  "timestamp": "2026-03-31T14:22:05.123Z",
+  "timestamp": "2026-04-01T14:22:05.123Z",
   "command": "run_tests",
   "args": ["--tb=short"],
   "exit_code": 0,
@@ -202,31 +222,15 @@ Rejected request example:
 
 ```json
 {
-  "timestamp": "2026-03-31T14:22:08.456Z",
-  "command": "unknown_cmd",
-  "args": [],
+  "timestamp": "2026-04-01T14:22:08.456Z",
+  "command": "run_tests",
+  "args": ["--flag; rm -rf /"],
   "exit_code": null,
   "duration_ms": 0,
   "stdout_bytes": 0,
   "stderr_bytes": 0,
   "rejected": true,
-  "rejection_reason": "Unknown command: 'unknown_cmd'"
-}
-```
-
-Malformed request (command field unparseable):
-
-```json
-{
-  "timestamp": "2026-03-31T14:22:10.789Z",
-  "command": null,
-  "args": null,
-  "exit_code": null,
-  "duration_ms": 0,
-  "stdout_bytes": 0,
-  "stderr_bytes": 0,
-  "rejected": true,
-  "rejection_reason": "Invalid JSON in request body"
+  "rejection_reason": "Argument contains disallowed characters: '--flag; rm -rf /'"
 }
 ```
 
@@ -242,7 +246,7 @@ All configuration is via environment variables with sensible defaults. No config
 
 | Variable | Default | Description |
 |---|---|---|
-| `BRIDGE_PORT` | `7357` | Port the HTTP server listens on |
+| `BRIDGE_PORT` | `7357` | Port the MCP HTTP server listens on |
 | `BRIDGE_HOST` | `0.0.0.0` | Bind address |
 | `BRIDGE_COMMANDS_FILE` | `/bridge/commands.json` | Path to the whitelist config |
 | `BRIDGE_LOG_DIR` | `/bridge/logs` | Directory for the JSONL log file |
@@ -253,7 +257,7 @@ All configuration is via environment variables with sensible defaults. No config
 
 ## 6. server.py Module Structure
 
-The server is a single file. No classes except the HTTP handler subclass. Internal organization by function:
+The server is a single file. Internal organization by function:
 
 ```
 server.py
@@ -269,29 +273,57 @@ server.py
 │   Check args are strings without metacharacters.
 │   Return None if valid, error message string if invalid.
 │
-├── execute_command(name, args, commands) → (int, dict)
-│   Look up command, build argv, run subprocess, return (http_status, response_dict).
-│   Handles timeout, file-not-found, and unknown command cases.
+├── execute_command(name, args, commands) → dict
+│   Look up command, build argv, run subprocess.
+│   Return dict with stdout, stderr, exit_code.
+│   Raise on timeout or exec failure.
 │
 ├── log_request(entry, log_dir, log_file)
 │   Append a single JSONL line to the log file.
 │
-├── class BridgeHandler(BaseHTTPRequestHandler)
-│   do_POST(): route /execute, parse JSON, call execute_command, log, respond.
-│   do_GET() / other: return 404/405.
-│   log_message(): override to suppress default stderr logging.
+├── build_tools(commands) → list[Tool]
+│   Generate MCP Tool definitions from command whitelist.
+│   Commands with allow_extra_args get args in schema;
+│   others get empty schema.
+│
+├── Tool handler functions
+│   One handler registered per tool name. Each handler:
+│   1. Extracts args from tool input (if schema allows)
+│   2. Validates args
+│   3. Calls execute_command
+│   4. Logs the request
+│   5. Returns MCP tool result (content + isError flag)
 │
 └── main()
-    Load commands, print startup banner, start HTTPServer, serve_forever.
+    Load commands, build tools, create MCP Server instance,
+    configure Streamable HTTP transport, start serving.
 ```
 
 ---
 
-## 7. Consumer Integration Specifications
+## 7. Dependencies
+
+### 7.1 requirements.txt
+
+```
+mcp>=1.1.0
+```
+
+The `mcp` package pulls in its transitive dependencies (including `anyio`, `httpx`, `starlette`, `uvicorn`, `pydantic`). The bridge code imports only from `mcp` and Python stdlib.
+
+Pinned versions will be determined during implementation and locked in `requirements.txt`.
+
+### 7.2 Python Version
+
+Python 3.11 or higher (matching the MCP SDK's minimum requirement).
+
+---
+
+## 8. Consumer Integration Specifications
 
 These specs define what a host project (e.g., find-work-bot) must provide to use the bridge. The bridge project itself does not contain these files.
 
-### 7.1 Dockerfile Dev Stage
+### 8.1 Dockerfile Dev Stage
 
 The host project's Dockerfile adds a `dev` stage that extends the production image:
 
@@ -299,15 +331,17 @@ The host project's Dockerfile adds a `dev` stage that extends the production ima
 FROM base AS dev
 # Install dev dependencies (pytest, ruff, mypy, etc.)
 RUN pip install -e ".[dev]"
-# Copy bridge server from build context
+# Copy bridge server and install its dependencies
 COPY bridge/server.py /bridge/server.py
+COPY bridge/requirements.txt /bridge/requirements.txt
+RUN pip install --no-cache-dir -r /bridge/requirements.txt
 # Default: start bridge server
 CMD ["python", "/bridge/server.py"]
 ```
 
-The bridge file is included in the Docker build context via the compose override's `build.context` or `build.additional_contexts` configuration. The exact mechanism depends on the host project's compose version and directory layout.
+The bridge files are included in the Docker build context via the compose override's `build.additional_contexts` configuration.
 
-### 7.2 Compose Dev Override (docker-compose.dev.yml)
+### 8.2 Compose Dev Override (docker-compose.dev.yml)
 
 ```yaml
 services:
@@ -317,9 +351,9 @@ services:
       additional_contexts:
         bridge: ../docker-cli-access-bridge
     volumes:
-      - ./src:/app/src                                    # Source code (rw)
-      - ./commands.json:/bridge/commands.json:ro           # Whitelist (ro)
-      - ./data/bridge-logs:/bridge/logs                    # Audit log (rw)
+      - ./src:/app/src
+      - ./commands.json:/bridge/commands.json:ro
+      - ./data/bridge-logs:/bridge/logs
     networks:
       - default
       - dev-bridge
@@ -334,7 +368,29 @@ networks:
 
 Key properties: the whitelist is mounted read-only, the bridge server is the container entrypoint (keeping it alive), and port 7357 is exposed on the network but not published to the host.
 
-### 7.3 Makefile Dual-Mode Targets
+### 8.3 MCP Registration (.mcp.json)
+
+A file at the consumer project root that registers the bridge with Claude Code:
+
+```json
+{
+  "mcpServers": {
+    "dev-bridge": {
+      "type": "http",
+      "url": "http://<compose-service-name>:7357/mcp"
+    }
+  }
+}
+```
+
+The `<compose-service-name>` is the Docker Compose service name as visible on the shared bridge network. For find-work-bot this would be the app service name from `docker-compose.dev.yml`.
+
+Alternatively, operators can register via CLI without committing to the repo:
+```bash
+claude mcp add --transport http dev-bridge http://<service>:7357/mcp --scope local
+```
+
+### 8.4 Makefile Dual-Mode Targets
 
 The host project's Makefile detects whether the dev container is running and switches execution mode:
 
@@ -355,34 +411,47 @@ test:
 
 The bridge is not involved. This mode switch gives the human operator the same targets regardless of whether the dev environment is active.
 
-### 7.4 Pre-commit Hook (scripts/pre-commit)
+### 8.5 Pre-commit Hook
 
-A shell script installed as `.git/hooks/pre-commit`:
+A script installed as `.git/hooks/pre-commit`. Two implementation options:
 
-```sh
+**Option A — curl with JSON-RPC** (no extra dependencies):
+```bash
 #!/usr/bin/env bash
 set -euo pipefail
 
-BRIDGE_URL="${BRIDGE_URL:-http://localhost:7357}"
+BRIDGE_URL="${BRIDGE_URL:-http://localhost:7357/mcp}"
 
 call_bridge() {
-  local cmd="$1"
+  local tool_name="$1"
   local response
-  response=$(curl -sf -X POST "$BRIDGE_URL/execute" \
+  response=$(curl -sf -X POST "$BRIDGE_URL" \
     -H "Content-Type: application/json" \
-    -d "{\"command\": \"$cmd\"}" 2>&1) || {
+    -d "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"tools/call\",\"params\":{\"name\":\"$tool_name\",\"arguments\":{}}}" 2>&1) || {
     echo "ERROR: Bridge unreachable at $BRIDGE_URL"
     echo "Start the dev container: make dev-up"
     exit 1
   }
+  # Extract exit_code from the nested JSON result
   local exit_code
-  exit_code=$(echo "$response" | python3 -c "import sys,json; print(json.load(sys.stdin)['exit_code'])")
+  exit_code=$(echo "$response" | python3 -c "
+import sys, json
+r = json.load(sys.stdin)
+content = json.loads(r['result']['content'][0]['text'])
+print(content['exit_code'])
+")
   if [ "$exit_code" -ne 0 ]; then
-    echo "FAILED: $cmd (exit code $exit_code)"
-    echo "$response" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d.get('stdout','')); print(d.get('stderr',''))"
+    echo "FAILED: $tool_name (exit code $exit_code)"
+    echo "$response" | python3 -c "
+import sys, json
+r = json.load(sys.stdin)
+content = json.loads(r['result']['content'][0]['text'])
+print(content.get('stdout', ''))
+print(content.get('stderr', ''))
+"
     exit 1
   fi
-  echo "PASSED: $cmd"
+  echo "PASSED: $tool_name"
 }
 
 call_bridge "run_lint"
@@ -390,17 +459,24 @@ call_bridge "run_typecheck"
 call_bridge "run_tests"
 ```
 
-The `BRIDGE_URL` defaults to `localhost:7357`, which works when the host publishes the port for debugging. In the standard setup (no host port), the pre-commit hook runs inside the Controller container where `http://<service-name>:7357` is used instead.
+**Option B — Python MCP client script** (cleaner, requires mcp SDK):
+```bash
+#!/usr/bin/env bash
+exec python3 scripts/pre-commit-check.py run_lint run_typecheck run_tests
+```
+
+With a ~20-line Python script using the MCP client SDK. Preferred if the dev environment already has the SDK installed.
 
 ---
 
-## 8. Consumer File Layout
+## 9. Consumer File Layout
 
 Files the consumer project provides (using find-work-bot as the example):
 
 ```
 find-work-bot/
 ├── commands.json              # Bridge whitelist (project-specific)
+├── .mcp.json                  # MCP registration for Claude Code
 ├── docker-compose.dev.yml     # Dev overlay (bridge integration)
 ├── docker/
 │   └── Dockerfile             # Multi-stage: base → dev
@@ -408,8 +484,7 @@ find-work-bot/
 │   └── pre-commit             # Bridge-based pre-commit hook
 ├── doc/
 │   └── DEVELOPMENT.md         # Dev workflow guide (references bridge)
-├── CLAUDE.md                  # Updated with bridge API docs for CC
 └── ...                        # (existing project files unchanged)
 ```
 
-None of these files modify the application source code under `src/`. Removing the bridge integration means deleting `commands.json`, `docker-compose.dev.yml`, the `dev` stage from the Dockerfile, and the pre-commit hook — then the project reverts to its original ephemeral-container workflow.
+None of these files modify the application source code under `src/`. Removing the bridge integration means deleting `commands.json`, `.mcp.json`, `docker-compose.dev.yml`, the `dev` stage from the Dockerfile, and the pre-commit hook — then the project reverts to its original ephemeral-container workflow.

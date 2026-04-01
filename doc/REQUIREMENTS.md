@@ -1,7 +1,7 @@
 # Requirements — Docker CLI Access Bridge
 
 > **Status:** Approved
-> **Last updated:** 2026-03-31
+> **Last updated:** 2026-04-01
 
 ---
 
@@ -13,7 +13,7 @@ The current workaround — asking a human operator to run `make test` and paste 
 
 ## 2. Solution Overview
 
-A lightweight HTTP server that runs inside the application's Docker container during development. It accepts requests to execute predefined CLI commands, runs them via `subprocess`, and returns the output. An external agent reaches the server over a shared Docker bridge network using the container's DNS name.
+An MCP (Model Context Protocol) server that runs inside the application's Docker container during development. It exposes whitelisted CLI commands as MCP tools over Streamable HTTP transport. An external AI agent discovers and calls these tools over a shared Docker bridge network using the container's DNS name.
 
 The bridge is **dev-only infrastructure**. It must not exist in production images and must be removable without any changes to the application's source code.
 
@@ -21,8 +21,8 @@ The bridge is **dev-only infrastructure**. It must not exist in production image
 
 ## 3. Actors
 
-- **Controller:** The AI development agent (Claude Code) running in its own container. Sends HTTP requests to trigger command execution. Has filesystem access to the application's source code but no Docker socket access.
-- **Target:** The application container running the bridge server. Hosts the application code, dev tools (pytest, ruff, mypy, etc.), and the bridge server process.
+- **Controller:** The AI development agent (Claude Code) running in its own container. Connects to the bridge as an MCP client. Has filesystem access to the application's source code but no Docker socket access.
+- **Target:** The application container running the bridge server. Hosts the application code, dev tools (pytest, ruff, mypy, etc.), and the bridge MCP server process.
 - **Human Operator:** Sets up the dev environment, starts the dev container, configures the command whitelist. Uses the application's Makefile directly (not the bridge) for interactive work.
 
 ---
@@ -31,21 +31,21 @@ The bridge is **dev-only infrastructure**. It must not exist in production image
 
 ### 4.1 Command Execution
 
-The bridge must accept an HTTP request specifying a named command and optional arguments, execute the command inside the container, and return the result synchronously.
+The bridge must expose each whitelisted command as an MCP tool. When a tool is called, the bridge executes the corresponding command inside the container and returns the result.
 
-- **Request:** A JSON payload containing a command name (string) and an optional list of additional arguments (array of strings).
-- **Response:** A JSON payload containing `stdout` (string), `stderr` (string), and `exit_code` (integer).
-- **Execution:** Commands are run via Python's `subprocess.run` with `shell=False`. The bridge constructs the full argument vector by prepending the command's configured executable prefix to any caller-provided arguments.
-- **Timeout:** A configurable global timeout (default: 60 seconds). Processes exceeding the timeout are killed and an error response is returned.
+- **Tool discovery:** The bridge must respond to MCP `tools/list` requests with a tool definition for each command in the whitelist. Each tool definition includes the command name, a human-readable description (derived from the executable prefix), and an input schema.
+- **Tool invocation:** When a tool is called via MCP `tools/call`, the bridge executes the command via Python's `subprocess.run` with `shell=False`. The bridge constructs the full argument vector by prepending the command's configured executable prefix to any caller-provided arguments.
+- **Tool result:** The bridge returns a structured result containing `stdout` (string), `stderr` (string), and `exit_code` (integer). Non-zero exit codes are reported as successful tool results (the bridge faithfully reports what the subprocess returned). Only bridge-level failures (unknown command, validation errors, timeouts) are reported as MCP tool errors.
+- **Timeout:** A configurable global timeout (default: 60 seconds). Processes exceeding the timeout are killed and a tool error is returned.
 
 ### 4.2 Command Whitelist
 
 The bridge must restrict execution to a predefined set of named commands. The whitelist is the **sole authorization mechanism** — any request for an unlisted command is rejected.
 
 Each whitelist entry defines:
-- **Name:** A symbolic identifier used in requests (e.g., `run_tests`, `run_lint`).
+- **Name:** A symbolic identifier that becomes the MCP tool name (e.g., `run_tests`, `run_lint`).
 - **Executable prefix:** The base command and any fixed arguments (e.g., `["python", "-m", "pytest"]`).
-- **Extra arguments allowed:** A boolean flag. When `true`, the caller may append additional arguments (file paths, flags, etc.) to the executable prefix. When `false`, only the exact executable prefix is run.
+- **Extra arguments allowed:** A boolean flag. When `true`, the generated MCP tool schema includes an `args` parameter that accepts additional arguments. When `false`, the tool schema exposes no `args` parameter — the constraint is enforced at the protocol level.
 - **Working directory:** The directory from which the command executes (e.g., `/app`).
 
 The whitelist must be:
@@ -61,7 +61,7 @@ Even though `shell=False` prevents shell injection by design, the bridge must ap
 
 ### 4.4 Logging
 
-The bridge must log every request and its outcome to a persistent JSONL file. Each log entry contains:
+The bridge must log every tool invocation and its outcome to a persistent JSONL file. Each log entry contains:
 - Timestamp (ISO 8601)
 - Command name requested
 - Arguments provided
@@ -75,17 +75,16 @@ The log directory must be volume-mounted from the host so logs persist across co
 
 Stdout/stderr content is **not** logged (to avoid unbounded log growth). The log captures metadata only.
 
-### 4.5 Error Responses
+### 4.5 Error Handling
 
-The bridge must return structured JSON error responses for:
-- Unknown command name → HTTP 400 with the unknown name and a list of available commands.
-- Extra arguments provided when `allow_extra_args` is `false` → HTTP 400.
-- Argument validation failure → HTTP 400 with the rejected argument.
-- Command timeout → HTTP 504 with timeout duration.
-- Subprocess failure (e.g., executable not found) → HTTP 500.
-- Malformed JSON in request body → HTTP 400.
+The bridge must return structured errors for:
+- Unknown command name → MCP tool error with the unknown name and a list of available tools.
+- Extra arguments provided when `allow_extra_args` is `false` → enforced by tool schema (no `args` parameter exposed); if bypassed, MCP tool error.
+- Argument validation failure → MCP tool error with the rejected argument.
+- Command timeout → MCP tool error with timeout duration and any partial output.
+- Subprocess failure (e.g., executable not found) → MCP tool error.
 
-Error responses follow the same JSON structure: `stdout`, `stderr`, `exit_code` where applicable, plus an `error` field with a human-readable message.
+MCP tool errors use the `isError` flag in tool results. Connection-level errors (server unreachable, malformed protocol messages) are handled by the MCP transport layer.
 
 ---
 
@@ -99,7 +98,7 @@ The Controller and Target communicate over a Docker bridge network. This network
 
 ### 5.2 DNS Resolution
 
-Containers communicate using Docker service names as hostnames. No static IP management. The Controller reaches the Target at `http://<service-name>:<port>/execute`.
+Containers communicate using Docker service names as hostnames. No static IP management. The Controller reaches the Target's MCP endpoint at `http://<service-name>:<port>/mcp`.
 
 ### 5.3 Port Exposure
 
@@ -121,7 +120,7 @@ The bridge imposes no restrictions on the Target container's existing network eg
 
 The host project must provide a mechanism (e.g., `make dev-up`) to:
 1. Ensure the external Docker bridge network exists (create if absent).
-2. Build the dev-stage Docker image (which includes the bridge server).
+2. Build the dev-stage Docker image (which includes the bridge server and MCP SDK).
 3. Start the Target container in long-running mode (bridge server as entrypoint).
 
 ### 6.2 Dev Container Shutdown
@@ -130,7 +129,7 @@ The host project must provide a mechanism (e.g., `make dev-down`) to stop the de
 
 ### 6.3 Rebuild Transparency
 
-Rebuilding the Target container between requests must be transparent to the Controller. The Controller does not maintain persistent connections — each request is independent. After a rebuild and restart, the container re-registers on the Docker network with the same service name.
+Rebuilding the Target container between requests must be transparent to the Controller. The Controller does not maintain persistent connections — each MCP request is independent. After a rebuild and restart, the container re-registers on the Docker network with the same service name.
 
 ### 6.4 Independence from Application Lifecycle
 
@@ -148,14 +147,18 @@ The host project's Makefile must support dual-mode operation:
 
 The bridge is not involved in Makefile target execution. It serves only the Controller (Claude Code).
 
-### 7.2 Pre-commit Hook
+### 7.2 Controller Registration
+
+The host project must provide an MCP server configuration (e.g., `.mcp.json` at project root) that registers the bridge with Claude Code. This tells the Controller where to find the bridge and enables automatic tool discovery.
+
+### 7.3 Pre-commit Hook
 
 The host project may install a pre-commit hook that uses the bridge to run checks before committing. The hook:
-- Sends requests to the bridge for each check (lint, typecheck, tests).
+- Sends tool call requests to the bridge for each check (lint, typecheck, tests).
 - Fails the commit if any check returns a non-zero exit code.
 - Provides a clear error message if the bridge is unreachable, directing the operator to start the dev container.
 
-### 7.3 Host Project Documentation
+### 7.4 Host Project Documentation
 
 The host project must maintain a development guide (`doc/DEVELOPMENT.md`) that covers:
 - Prerequisites for the dev workflow (Docker, the bridge network, the bridge project as a sibling dependency).
@@ -163,14 +166,6 @@ The host project must maintain a development guide (`doc/DEVELOPMENT.md`) that c
 - How the bridge works and what commands are available.
 - Pre-commit hook setup.
 - Reference to secrets/config setup (`_env.example`, etc.).
-
-### 7.4 Controller Documentation
-
-The host project's AI agent instructions file (e.g., `CLAUDE.md`) must document:
-- The bridge endpoint URL and port.
-- The request format with examples.
-- Available commands (referencing the whitelist config).
-- How to interpret responses.
 
 ---
 
@@ -181,6 +176,7 @@ The bridge must be fully removable from a host project without modifying any app
 - **Bridge server code** lives outside the application's source tree (e.g., in a separate project directory, not inside `src/`).
 - **Dockerfile integration** uses a multi-stage build. The production stage does not include the bridge. The dev stage extends the production stage with the bridge layer.
 - **Compose integration** uses a separate override file (e.g., `docker-compose.dev.yml`). Removing the override file restores the original ephemeral-container behavior.
+- **MCP registration** is a standalone config file (`.mcp.json`) or a CLI registration (`claude mcp remove`). Removing it deregisters the bridge from the Controller.
 - **Whitelist config** is a standalone file mounted into the container, not part of the application's configuration.
 - **No application code imports or references** the bridge. The bridge is infrastructure, not a library.
 
@@ -192,7 +188,7 @@ The bridge must be usable across multiple CLI-based Docker projects without modi
 
 - Each host project provides its own `commands.json` whitelist.
 - Each host project provides its own Dockerfile dev stage and compose override that reference the shared bridge server file.
-- The bridge server is a single Python file with zero external dependencies (stdlib only).
+- The bridge server is a single Python file that depends on the MCP Python SDK and Python stdlib. Dependencies are declared in a `requirements.txt` shipped alongside the server.
 - The bridge makes no assumptions about the application's language, framework, or tooling — it executes arbitrary (whitelisted) CLI commands.
 
 ---
@@ -201,7 +197,7 @@ The bridge must be usable across multiple CLI-based Docker projects without modi
 
 - **Authentication/authorization** beyond the command whitelist. The bridge is accessible only within the Docker network, which is sufficient for the dev use case.
 - **Concurrent request handling.** The bridge processes one request at a time. Dev tool invocations are sequential (run lint, then test, then typecheck). If concurrency becomes needed, it is a future enhancement.
-- **Health check endpoint.** A failing curl to `/execute` with a known command provides equivalent information. The bridge either responds or it doesn't.
 - **HTTPS/TLS.** Traffic is container-to-container on an isolated Docker network.
 - **Persistent state.** The bridge is stateless (aside from the append-only log file). No database, no session tracking.
 - **File transfer.** The bridge does not upload or download files. The Controller and Target share access to source files via their respective volume mounts.
+- **MCP resources or prompts.** The bridge exposes only MCP tools. It does not serve MCP resources (file content) or prompts (templated interactions).

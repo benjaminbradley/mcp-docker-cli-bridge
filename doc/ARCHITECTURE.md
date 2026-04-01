@@ -1,13 +1,14 @@
 # Architecture — Docker CLI Access Bridge
 
 > **Status:** Approved
-> **Last updated:** 2026-03-31
+> **Last updated:** 2026-04-01
+> **References:** [ADR 001 — MCP Transport](adr/001-mcp-transport.md)
 
 ---
 
 ## 1. System Overview
 
-The bridge is a single-process HTTP server that translates incoming JSON requests into subprocess invocations, constrained by a read-only command whitelist. It runs inside a host project's Docker container during development, exposed only on an internal Docker bridge network.
+The bridge is a single-process MCP server that exposes whitelisted CLI commands as MCP tools over Streamable HTTP transport. It runs inside a host project's Docker container during development, reachable only on an internal Docker bridge network.
 
 ```
 ┌──────────────────────────────────────────────────────────────────┐
@@ -17,13 +18,14 @@ The bridge is a single-process HTTP server that translates incoming JSON request
 │  │ Controller Container │       │ Target Container (dev stage) │ │
 │  │ (Claude Code)        │       │                              │ │
 │  │                      │       │  ┌────────────────────────┐  │ │
-│  │  curl / HTTP client ─┼──────▶│  │ Bridge Server (:7357)  │  │ │
-│  │                      │  Docker│  │                        │  │ │
-│  │  Volume: /app/src ───┼─bridge─│  │  Whitelist   Executor  │  │ │
-│  │  (shared source)     │network │  │  Loader      ─────────▶│──┼─┤ subprocess.run
-│  │                      │       │  │               Validator │  │ │ (shell=False)
-│  └──────────────────────┘       │  │               Logger    │  │ │
-│                                  │  └────────────────────────┘  │ │
+│  │  MCP Client ─────────┼──────▶│  │ Bridge MCP Server      │  │ │
+│  │  (tools/list,        │  Docker│  │ (:7357/mcp)            │  │ │
+│  │   tools/call)        │  bridge│  │                        │  │ │
+│  │                      │network │  │  Whitelist   Executor  │  │ │
+│  │  Volume: /app/src ───┼───────┼──│  Loader      ─────────▶│──┼─┤ subprocess.run
+│  │  (shared source)     │       │  │               Validator │  │ │ (shell=False)
+│  │                      │       │  │               Logger    │  │ │
+│  └──────────────────────┘       │  └────────────────────────┘  │ │
 │                                  │                              │ │
 │                                  │  Application code + dev tools│ │
 │                                  │  (pytest, ruff, mypy, etc.)  │ │
@@ -40,19 +42,25 @@ The bridge is a single-process HTTP server that translates incoming JSON request
 └──────────────────────────────────────────────────────────────────┘
 ```
 
-The Controller (Claude Code) and Target are independent containers that share a source code volume and a Docker bridge network. The bridge server is the only communication channel between them for command execution. The human operator bypasses the bridge entirely, using `make` targets that `docker compose exec` into the running container or `docker compose run --rm` ephemeral containers.
+The Controller (Claude Code) connects to the bridge as a standard MCP client. It discovers available tools via `tools/list` and invokes them via `tools/call`. The bridge translates each tool call into a subprocess invocation constrained by the read-only command whitelist.
+
+The human operator bypasses the bridge entirely, using `make` targets that `docker compose exec` into the running container or `docker compose run --rm` ephemeral containers.
 
 ---
 
 ## 2. Bridge Server Components
 
-The server is a single Python file (`server.py`) with four internal responsibilities, not separate modules:
+The server is a single Python file (`server.py`) using the MCP Python SDK for the transport layer and Python stdlib for command execution. It has five internal responsibilities:
 
-### 2.1 HTTP Handler
+### 2.1 MCP Tool Provider
 
-A subclass of `http.server.BaseHTTPRequestHandler`. Accepts `POST /execute` requests only. Parses JSON request bodies, dispatches to the executor, and serializes JSON responses. All other paths and methods return HTTP 404.
+Uses the MCP Python SDK to register tools and handle Streamable HTTP transport. On startup, the server reads the command whitelist and registers each command as an MCP tool with a typed input schema. The SDK handles protocol negotiation, request routing, and response serialization.
 
-The server uses `http.server.HTTPServer` (single-threaded, blocking). One request is processed at a time. This is intentional — dev tool invocations are sequential and concurrency is a non-requirement.
+Tools are registered dynamically from the whitelist — the server code does not hardcode any tool definitions. Adding a new command to `commands.json` and restarting the container is sufficient.
+
+Tool schemas are derived from the whitelist:
+- Commands with `allow_extra_args: true` get an input schema with an optional `args` array parameter.
+- Commands with `allow_extra_args: false` get an input schema with no parameters. The protocol-level constraint prevents the Controller from sending arguments.
 
 ### 2.2 Whitelist Loader
 
@@ -60,7 +68,7 @@ Reads and validates `commands.json` once at startup. Builds an in-memory lookup 
 
 ### 2.3 Executor
 
-Resolves a command name to its whitelist entry, constructs the full argument vector (executable prefix + optional caller args), and calls `subprocess.run` with `shell=False`, `capture_output=True`, `text=True`, `timeout`, and `cwd` from the whitelist entry. Returns stdout, stderr, and exit code. Catches `subprocess.TimeoutExpired` and `FileNotFoundError` and translates them to appropriate error responses.
+Resolves a command name to its whitelist entry, constructs the full argument vector (executable prefix + optional caller args), and calls `subprocess.run` with `shell=False`, `capture_output=True`, `text=True`, `timeout`, and `cwd` from the whitelist entry. Returns stdout, stderr, and exit code. Catches `subprocess.TimeoutExpired` and `FileNotFoundError` and translates them to MCP tool errors.
 
 ### 2.4 Argument Validator
 
@@ -68,7 +76,7 @@ A pure function called before execution. Checks that all caller-provided argumen
 
 ### 2.5 Request Logger
 
-Appends a single JSONL line per request to a log file. The log entry is written after the request completes (or fails), capturing metadata only: timestamp, command name, args, exit code, duration in milliseconds, stdout/stderr byte lengths, and rejection reason if applicable. Stdout/stderr content is not logged.
+Appends a single JSONL line per tool invocation to a log file. The log entry is written after the request completes (or fails), capturing metadata only: timestamp, command name, args, exit code, duration in milliseconds, stdout/stderr byte lengths, and rejection reason if applicable. Stdout/stderr content is not logged.
 
 The logger opens and closes the file per write (append mode) to avoid holding file handles and to ensure log entries are flushed even if the server crashes.
 
@@ -77,34 +85,40 @@ The logger opens and closes the file per write (append mode) to avoid holding fi
 ## 3. Request Flow
 
 ```
-Controller                    Bridge Server                    subprocess
-    │                              │                               │
-    │  POST /execute               │                               │
-    │  {"command":"run_tests",     │                               │
-    │   "args":["--tb=short"]}     │                               │
-    │─────────────────────────────▶│                               │
-    │                              │  1. Parse JSON body           │
-    │                              │  2. Look up "run_tests"       │
-    │                              │     in whitelist               │
-    │                              │  3. Check allow_extra_args    │
-    │                              │  4. Validate args             │
-    │                              │  5. Build argv:               │
-    │                              │     ["python","-m","pytest",  │
-    │                              │      "--tb=short"]            │
-    │                              │  6. subprocess.run(argv,      │
-    │                              │     shell=False, cwd="/app")  │
-    │                              │─────────────────────────────▶│
-    │                              │                               │
-    │                              │  stdout, stderr, returncode  │
-    │                              │◀─────────────────────────────│
-    │                              │  7. Log metadata (JSONL)     │
-    │                              │  8. Build JSON response      │
-    │  {"stdout":"...","stderr":"",│                               │
-    │   "exit_code":0}             │                               │
-    │◀─────────────────────────────│                               │
+Controller (CC)                   Bridge MCP Server                subprocess
+    │                                  │                               │
+    │  tools/list                      │                               │
+    │─────────────────────────────────▶│                               │
+    │  [{name:"run_tests",             │                               │
+    │    inputSchema:{args:[str]}},    │                               │
+    │   {name:"run_lint",              │                               │
+    │    inputSchema:{}}]              │                               │
+    │◀─────────────────────────────────│                               │
+    │                                  │                               │
+    │  tools/call                      │                               │
+    │  name:"run_tests"                │                               │
+    │  args:["--tb=short"]             │                               │
+    │─────────────────────────────────▶│                               │
+    │                                  │  1. Look up "run_tests"       │
+    │                                  │     in whitelist               │
+    │                                  │  2. Validate args             │
+    │                                  │  3. Build argv:               │
+    │                                  │     ["python","-m","pytest",  │
+    │                                  │      "--tb=short"]            │
+    │                                  │  4. subprocess.run(argv,      │
+    │                                  │     shell=False, cwd="/app")  │
+    │                                  │─────────────────────────────▶│
+    │                                  │                               │
+    │                                  │  stdout, stderr, returncode  │
+    │                                  │◀─────────────────────────────│
+    │                                  │  5. Log metadata (JSONL)     │
+    │                                  │  6. Return tool result       │
+    │  content: [{text: JSON of        │                               │
+    │    stdout, stderr, exit_code}]   │                               │
+    │◀─────────────────────────────────│                               │
 ```
 
-Error paths short-circuit at the relevant step: unknown command at step 2, disallowed extra args at step 3, metacharacter rejection at step 4, timeout or exec failure at step 6. All error paths still log (step 7) with the rejection reason.
+Error paths short-circuit at the relevant step: unknown command at step 1 (tool not found), metacharacter rejection at step 2, timeout or exec failure at step 4. All error paths still log (step 5) with the rejection reason. Bridge-level errors set `isError: true` in the MCP tool result.
 
 ---
 
@@ -112,7 +126,7 @@ Error paths short-circuit at the relevant step: unknown command at step 2, disal
 
 ### 4.1 Multi-stage Dockerfile (in host project)
 
-The bridge integrates into the host project's Dockerfile as an additional build stage. The bridge server file is copied from its sibling project directory at build time.
+The bridge integrates into the host project's Dockerfile as an additional build stage. The bridge server file and its dependencies are copied from the sibling project directory at build time.
 
 ```
 FROM python:3.x AS base
@@ -120,11 +134,13 @@ FROM python:3.x AS base
 
 FROM base AS dev
 # ... dev dependencies (pytest, ruff, mypy) ...
-COPY ../docker-cli-access-bridge/server.py /bridge/server.py
+COPY bridge/server.py /bridge/server.py
+COPY bridge/requirements.txt /bridge/requirements.txt
+RUN pip install --no-cache-dir -r /bridge/requirements.txt
 CMD ["python", "/bridge/server.py"]
 ```
 
-The `base` stage is the production image. The `dev` stage extends it. The bridge file never appears in production builds. The exact `COPY` path depends on the Docker build context; the host project's compose override configures this.
+The `base` stage is the production image. The `dev` stage extends it. The bridge file and its MCP SDK dependencies never appear in production builds. The exact `COPY` path depends on the Docker build context; the host project's compose override configures this.
 
 ### 4.2 Compose Override (in host project)
 
@@ -142,6 +158,14 @@ The base `docker-compose.yml` is unchanged. The dev override is additive.
 
 Created once by the operator: `docker network create <network-name>`. Not managed by any project's compose lifecycle. Both the Controller container and the Target container (via their respective compose configs) attach to this network. The network name is a per-deployment convention, documented in each consumer project.
 
+### 4.4 Controller MCP Registration
+
+The Controller (Claude Code) is configured to connect to the bridge as an MCP server. This is done via one of:
+- A `.mcp.json` file at the consumer project root (version-controllable, project-scoped).
+- A CLI command: `claude mcp add --transport http dev-bridge http://<service>:7357/mcp`.
+
+The registration tells Claude Code where to find the bridge. Tool discovery and invocation happen automatically via the MCP protocol.
+
 ---
 
 ## 5. Integration Model
@@ -151,37 +175,42 @@ The bridge project is a **sibling directory dependency** — it lives alongside 
 ```
 parent/
 ├── docker-cli-access-bridge/    # This project (shared tool)
-│   ├── server.py                # The bridge server (single file)
+│   ├── server.py                # The bridge MCP server
+│   ├── requirements.txt         # MCP SDK + dependencies
 │   ├── README.md
 │   └── doc/
 │       ├── REQUIREMENTS.md
 │       ├── ARCHITECTURE.md
 │       ├── SPECS.md
-│       └── TODO.md
+│       ├── TODO.md
+│       └── adr/
+│           └── 001-mcp-transport.md
 │
 ├── find-work-bot/               # Consumer project A
 │   ├── commands.json            # FWB-specific whitelist
+│   ├── .mcp.json                # MCP registration for CC
 │   ├── docker-compose.dev.yml   # Dev override referencing bridge
 │   ├── doc/DEVELOPMENT.md       # Documents bridge dependency
-│   ├── CLAUDE.md                # Documents bridge for CC
 │   └── ...
 │
 └── other-project/               # Consumer project B
     ├── commands.json            # Its own whitelist
+    ├── .mcp.json                # Its own MCP registration
     ├── docker-compose.dev.yml   # Its own dev override
     └── ...
 ```
 
-Each consumer provides four integration touchpoints:
+Each consumer provides these integration touchpoints:
 
 1. **`commands.json`** — the project-specific command whitelist, mounted read-only into the dev container.
 2. **`docker-compose.dev.yml`** — dev compose override that builds the dev stage, mounts the whitelist and logs, and joins the bridge network.
-3. **Dockerfile dev stage** — extends the production image with dev tools and the bridge server.
-4. **Documentation** — `doc/DEVELOPMENT.md` for humans, `CLAUDE.md` for the Controller.
+3. **Dockerfile dev stage** — extends the production image with dev tools, the bridge server, and its dependencies.
+4. **`.mcp.json`** — registers the bridge as an MCP server for Claude Code.
+5. **Documentation** — `doc/DEVELOPMENT.md` for humans.
 
 Optional:
-5. **Pre-commit hook** — shell script that calls the bridge for lint/typecheck/test checks.
-6. **Makefile dual-mode** — targets that detect the running dev container and use `exec` instead of `run --rm`.
+6. **Pre-commit hook** — script that calls the bridge for lint/typecheck/test checks.
+7. **Makefile dual-mode** — targets that detect the running dev container and use `exec` instead of `run --rm`.
 
 ---
 
@@ -192,16 +221,16 @@ The bridge has no persistent data model. Its only data structures are:
 ### 6.1 Whitelist Entry (in-memory, loaded from commands.json)
 
 Per-command configuration read at startup:
-- `name` — symbolic identifier (the lookup key).
+- `name` — symbolic identifier (the MCP tool name and the lookup key).
 - `command` — executable prefix as an array of strings.
-- `allow_extra_args` — boolean, whether caller may append arguments.
+- `allow_extra_args` — boolean, whether the tool schema exposes an `args` parameter.
 - `cwd` — working directory for the subprocess.
 
 ### 6.2 Log Entry (appended to JSONL file)
 
-Per-request metadata, written after each request completes:
+Per-request metadata, written after each tool invocation completes:
 - `timestamp` — ISO 8601.
-- `command` — command name from request (or `null` if parse failed).
+- `command` — tool name from request (or `null` if parse failed).
 - `args` — arguments array from request.
 - `exit_code` — subprocess exit code (or `null` if not executed).
 - `duration_ms` — wall-clock execution time in milliseconds.
@@ -218,6 +247,7 @@ The bridge's security posture is designed for a trusted dev-only network, not ho
 
 - **Network isolation:** The bridge port is reachable only from the Docker bridge network. No host port binding by default.
 - **Command restriction:** Only whitelisted commands execute. The whitelist file is mounted read-only.
+- **Schema-enforced constraints:** Commands with `allow_extra_args: false` generate tool schemas with no args parameter. The protocol-level constraint prevents the Controller from sending arguments.
 - **No shell:** `subprocess.run` with `shell=False` eliminates the shell injection surface entirely.
 - **Argument validation:** Defense-in-depth rejection of shell metacharacters in caller-provided args.
 - **No auth:** Intentional. Network isolation is the access control. Adding auth would increase complexity without meaningful security improvement in the dev context.
@@ -227,8 +257,8 @@ The bridge's security posture is designed for a trusted dev-only network, not ho
 
 ## 8. Constraints and Dependencies
 
-- **Python 3.x stdlib only.** No `pip install`. The server uses `http.server`, `json`, `subprocess`, `datetime`, `os`, and `pathlib`.
-- **Single-threaded.** One request at a time. Sufficient for sequential dev tool invocations.
+- **Python MCP SDK.** The server depends on the `mcp` package and its transitive dependencies. Dependencies are declared in `requirements.txt` and installed in the dev Docker stage.
+- **Single-threaded tool execution.** One command at a time. The MCP SDK may handle concurrent transport-level requests, but tool execution is serialized. Sufficient for sequential dev tool invocations.
 - **No hot-reload.** Whitelist changes require a container restart. This is a feature — it prevents runtime config mutation.
 - **Docker required.** The bridge assumes it runs inside a Docker container on a Docker bridge network. It has no standalone mode.
-- **Consumer provides the Dockerfile.** The bridge project ships only `server.py`. The consumer project owns the Dockerfile, compose files, whitelist, and all integration wiring.
+- **Consumer provides the Dockerfile.** The bridge project ships `server.py` and `requirements.txt`. The consumer project owns the Dockerfile, compose files, whitelist, MCP registration, and all integration wiring.
