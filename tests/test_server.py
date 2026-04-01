@@ -2,6 +2,8 @@
 import asyncio
 import json
 import subprocess
+from datetime import datetime, timezone
+from pathlib import Path
 
 import pytest
 from pydantic import ValidationError
@@ -378,3 +380,72 @@ class TestToolHandlers:
         finally:
             server._lock.release()
             server._current_command = None
+
+
+class TestLogRequest:
+    """Tests for log_request() — JSONL file creation, appending, and field presence."""
+
+    def _make_entry(self, **overrides):
+        from server import LogEntry
+
+        defaults = dict(
+            timestamp=datetime(2026, 4, 1, 12, 0, 0, tzinfo=timezone.utc),
+            command="run_tests",
+            args=["--tb=short"],
+            exit_code=0,
+            duration_ms=1234,
+            stdout="ok\n",
+            stderr="",
+            stdout_bytes=3,
+            stderr_bytes=0,
+            rejected=False,
+            rejection_reason=None,
+        )
+        return LogEntry(**{**defaults, **overrides})
+
+    def test_creates_log_file_if_not_exists(self, tmp_path):
+        from server import log_request
+
+        log_dir = tmp_path / "logs"
+        log_dir.mkdir()
+        entry = self._make_entry()
+        log_request(entry, str(log_dir), "bridge.jsonl")
+        log_file = log_dir / "bridge.jsonl"
+        assert log_file.exists()
+        lines = log_file.read_text().splitlines()
+        assert len(lines) == 1
+
+    def test_creates_log_directory_if_not_exists(self, tmp_path):
+        from server import log_request
+
+        log_dir = tmp_path / "nested" / "logs"
+        entry = self._make_entry()
+        log_request(entry, str(log_dir), "bridge.jsonl")
+        assert (log_dir / "bridge.jsonl").exists()
+
+    def test_appends_valid_jsonl_lines(self, tmp_path):
+        from server import log_request
+
+        log_dir = tmp_path / "logs"
+        entry = self._make_entry()
+        log_request(entry, str(log_dir), "bridge.jsonl")
+        log_request(entry, str(log_dir), "bridge.jsonl")
+        lines = (log_dir / "bridge.jsonl").read_text().splitlines()
+        assert len(lines) == 2
+        for line in lines:
+            json.loads(line)  # each line must be valid JSON
+
+    def test_log_entry_fields_present(self, tmp_path):
+        from server import log_request
+
+        log_dir = tmp_path / "logs"
+        entry = self._make_entry()
+        log_request(entry, str(log_dir), "bridge.jsonl")
+        line = (log_dir / "bridge.jsonl").read_text().splitlines()[0]
+        data = json.loads(line)
+        expected_keys = {
+            "timestamp", "command", "args", "exit_code", "duration_ms",
+            "stdout", "stderr", "stdout_bytes", "stderr_bytes",
+            "rejected", "rejection_reason",
+        }
+        assert expected_keys <= set(data.keys())
