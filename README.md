@@ -187,7 +187,7 @@ Requires Docker. All commands are in the Makefile:
 ```bash
 make help          # list available targets
 make build         # build the dev image
-make up            # start the bridge server (http://localhost:7357/mcp)
+make up            # start the bridge server
 make down          # stop the bridge server
 make logs          # tail server logs
 make test          # run unit tests inside the container
@@ -197,7 +197,40 @@ make format        # ruff format
 make shell         # open a shell in the container
 ```
 
-The bridge registers itself as an MCP server via `.mcp.json` (`bridge-dev` at `http://my-app:7357/mcp`). With the container running, Claude Code discovers and can call `echo_test`, `run_tests`, `run_lint`, `run_typecheck`, `run_format_check`, and `sleep_test` as tools for e2e verification.
+The bridge self-hosts: `.mcp.json` registers `bridge-dev` at `http://my-app:7357/mcp`, so Claude Code can call `echo_test`, `run_tests`, `run_lint`, `run_typecheck`, `run_format_check`, and `sleep_test` as tools for e2e verification.
+
+### One-time setup (devcontainer + Docker network)
+
+The Claude Code devcontainer has an egress firewall. The `bridge-dev` Docker network uses a fixed subnet (`172.21.0.0/24`) that the firewall allows. To enable `my-app` hostname resolution from inside the devcontainer:
+
+**1. Rebuild the devcontainer** (once, to pick up the updated firewall script):
+
+> VS Code: `Dev Containers: Rebuild Container`
+
+**2. Create the bridge-dev network and start the server:**
+
+```bash
+make down          # ensure clean state
+docker network rm bridge-dev 2>/dev/null || true
+make up
+```
+
+**3. Connect the Claude Code container to the network** (from the host, after each devcontainer rebuild):
+
+```bash
+# Find the devcontainer name
+docker ps --format '{{.Names}}'
+
+docker network connect bridge-dev <devcontainer-name>
+```
+
+**4. Verify connectivity** (from inside the devcontainer):
+
+```bash
+curl http://my-app:7357/mcp
+```
+
+After `make down && make up` cycles, only step 3 needs to be repeated (the network and subnet persist).
 
 ## Removal
 
