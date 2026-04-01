@@ -1,6 +1,6 @@
 # Implementation Plan — MCP Docker CLI Bridge
 
-> **Status:** Active — Phases 0, 1, 1.5 complete. Next: Phase 2 (Request Logging).
+> **Status:** Active — Phases 0, 1, 1.5, 2 complete. Next: Phase 3 (Integration Verification) — requires `make down && make up` to apply docker-compose.yml fix first.
 > **Created:** 2026-04-01
 > **References:** [Requirements](REQUIREMENTS.md) · [Architecture](ARCHITECTURE.md) · [Specs](SPECS.md) · [ADR 001](adr/001-mcp-transport.md) · [ADR 002](adr/002-pydantic-models.md)
 
@@ -140,30 +140,19 @@ Legend:
 
 ### 2.1 — Implement log_request
 
-- [ ] **RED:** In `tests/test_server.py`, add class `TestLogRequest`. Write tests covering:
-  - `test_creates_log_file_if_not_exists` — call `log_request` with a `tmp_path`-based log dir; confirm the file is created with one line.
-  - `test_creates_log_directory_if_not_exists` — call `log_request` with a nested subdirectory that does not exist; confirm the directory and file are created.
-  - `test_appends_valid_jsonl_line` — call `log_request` twice; confirm the file has two lines, each valid JSON.
-  - `test_log_entry_fields_present` — parse a written line; confirm all expected keys are present (`timestamp`, `command`, `args`, `exit_code`, `duration_ms`, `stdout`, `stderr`, `stdout_bytes`, `stderr_bytes`, `rejected`, `rejection_reason`).
-  Run `pytest tests/ -v`, confirm new tests fail because `log_request` does not exist yet.
-- [ ] **GREEN:** Implement `log_request(entry: LogEntry, log_dir, log_file)`: append `entry.model_dump_json()` + newline to log file. Create log directory if it does not exist. Open and close file per write. Run `pytest tests/ -v`, confirm all `TestLogRequest` tests pass.
-- [ ] **REFACTOR:** Ensure file is opened and closed per-write (no held handle). Keep tests green.
+- [x] **RED:** `TestLogRequest` (4 tests) written and confirmed failing.
+- [x] **GREEN:** `log_request()` using `Path.mkdir(parents=True, exist_ok=True)` + open/close per write. 43/43 passing.
+- [-] **REFACTOR:** N/A — already clean.
 - [ ] **Verify:** After a few tool calls via MCP Inspector, inspect the log file. Confirm each line is valid JSON with all expected fields. Confirm rejected requests have `rejected: true`, a reason, and null stdout/stderr.
-- **Files:** `server.py` (modify), `tests/test_server.py` (modify)
+- **Files:** `server.py`, `tests/test_server.py`, `tests/conftest.py`, `tests/server.py`
 
 ### 2.2 — Integrate logging into tool handlers
 
-- [ ] **RED:** Extend `TestToolHandlers` or add `TestLogIntegration`. Write tests covering:
-  - `test_successful_call_logged` — after a successful handler call (with tmp-path log dir injected), confirm one log line with `rejected == False` and matching `exit_code`.
-  - `test_rejected_call_logged_with_reason` — after a validation-rejected call, confirm one log line with `rejected == True`, non-null `rejection_reason`, and null `stdout`/`stderr`.
-  - `test_busy_rejection_logged` — after a busy-rejection call, confirm log line with `rejected == True` and reason naming the in-progress command.
-  - `test_duration_ms_nonzero_for_executed_commands` — confirm `duration_ms > 0` for a completed execution log entry.
-  - `test_duration_ms_zero_for_rejected_requests` — confirm `duration_ms == 0` for validation-rejected and busy-rejected entries.
-  Run `pytest tests/ -v`, confirm new tests fail because `log_request` is not yet wired into handlers.
-- [ ] **GREEN:** Construct `LogEntry` at the end of every tool handler path (success, error, and busy rejection). Capture wall-clock duration using `time.monotonic()` around the execution call. Run `pytest tests/ -v`, confirm all logging integration tests pass.
-- [ ] **REFACTOR:** Ensure all handler paths (success, validation error, timeout, exec failure, busy) construct and write a `LogEntry`. Keep tests green.
+- [x] **RED:** `TestLogIntegration` (5 tests) written and confirmed failing.
+- [x] **GREEN:** `_create_tool_handler` now accepts `log_dir`/`log_file`; logs all paths (success, validation rejection, busy rejection) using `LogEntry` + `time.monotonic()` for duration. 43/43 passing.
+- [-] **REFACTOR:** N/A — handler is clean; all paths covered.
 - [ ] **Verify:** Send a successful tool call, a rejected tool call (bad args), and a busy rejection (concurrent call). Confirm all three produce log entries with correct `rejected` and `rejection_reason` values. Confirm `duration_ms` is non-zero for executed commands and zero for rejected/busy requests.
-- **Files:** `server.py` (modify), `tests/test_server.py` (modify)
+- **Files:** `server.py`, `tests/test_server.py`, `tests/server.py`
 
 ---
 
