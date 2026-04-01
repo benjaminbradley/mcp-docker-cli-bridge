@@ -71,15 +71,15 @@ Legend:
 
 ### 0.3 — Tool registration and tools/list
 
-- [ ] **RED:** In `tests/test_server.py`, add class `TestBuildTools`. Write tests covering:
+- [o] **RED:** In `tests/test_server.py`, add class `TestBuildTools`. Write tests covering:
   - `test_builds_one_tool_per_command` — `build_tools(config)` returns a list with the same number of tools as commands in `config`.
   - `test_tool_name_matches_command_name` — each tool's `name` matches its key in `commands`.
   - `test_allow_extra_args_true_includes_args_in_schema` — a command with `allow_extra_args=True` produces a tool whose `inputSchema.properties` contains an `args` key with `type: array, items: {type: string}`.
   - `test_allow_extra_args_false_has_empty_schema` — a command with `allow_extra_args=False` produces a tool whose `inputSchema.properties` is empty (`{}`).
   - `test_description_format` — tool description is `"Execute: "` followed by the command array joined by spaces.
   Run `pytest tests/ -v`, confirm new tests fail because `build_tools` does not exist yet (right reason: `AttributeError` or `ImportError`).
-- [ ] **GREEN:** Implement `build_tools(config)` per SPECS.md §1.2: generate MCP tool definitions from `CommandsConfig`. Create MCP Server instance, register tools, configure Streamable HTTP transport on `BRIDGE_HOST:BRIDGE_PORT`. Run `pytest tests/ -v`, confirm all `TestBuildTools` tests pass.
-- [ ] **REFACTOR:** Extract schema-building helpers if the function is long. Keep tests green.
+- [o] **GREEN:** Implement `build_tools(config)` per SPECS.md §1.2: generate MCP tool definitions from `CommandsConfig`. Create MCP Server instance, register tools, configure Streamable HTTP transport on `BRIDGE_HOST:BRIDGE_PORT`. Run `pytest tests/ -v`, confirm all `TestBuildTools` tests pass.
+- [-] **REFACTOR:** N/A — `build_tools` is clean; `_register_tools` extracted as a named function.
 - [ ] **Verify:** Start the server. Use the MCP Inspector (`npx @modelcontextprotocol/inspector`) or curl to confirm `tools/list` returns the expected tool definitions matching the test `commands.json`. Confirm tools with `allow_extra_args: false` have no `args` in their schema.
 - **Files:** `server.py` (modify), `tests/test_server.py` (modify)
 
