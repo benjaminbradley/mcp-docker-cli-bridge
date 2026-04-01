@@ -1,0 +1,28 @@
+{
+  "cleanupPeriodDays": 36500,
+  "permissions": {
+    "allow": [
+      "Edit",
+      "Bash(find *)",
+      "Bash(grep :*)",
+      "Bash(head :*)",
+      "Bash(tail :*)",
+      "Bash(ls *)",
+      "Bash(sort *)",
+      "Bash(tree :*)",
+      "Bash(wc *)",
+      "Bash(git add:*)",
+      "Bash(git commit:*)",
+      "Bash(git mv:*)"
+    ],
+    "deny": [
+      "Read(./.env)",
+      "Read(./.env.*)",
+      "Read(./secrets/**)"
+    ]
+  },
+  "statusLine": {
+    "type": "command",
+    "command": "npx -y @owloops/claude-powerline@latest --style=powerline"
+  }
+}
