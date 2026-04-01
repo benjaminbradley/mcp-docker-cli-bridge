@@ -15,3 +15,8 @@ services:
       - BRIDGE_HOST=0.0.0.0
       - BRIDGE_COMMANDS_FILE=/bridge/commands.json
       - BRIDGE_LOG_DIR=/bridge/logs
+    networks:
+        - bridge-dev
+networks:
+  bridge-dev:
+    name: bridge-dev
