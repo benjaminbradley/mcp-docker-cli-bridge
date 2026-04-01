@@ -37,12 +37,12 @@ Legend:
 > **Infrastructure task — no TDD cycle.** Creates the container environment in which all subsequent TDD cycles run.
 > **Note:** `make build` requires 0.1's `requirements.txt` to exist first. Create 0.0 and 0.1 files together, then verify both.
 
-- [ ] Create `Dockerfile` (base stage: MCP SDK deps + server.py + non-root user; dev stage: adds pytest, ruff, mypy, pytest-asyncio)
-- [ ] Create `docker-compose.yml` (service `my-app`, port `127.0.0.1:7357:7357`, volumes: `commands.dev.json:ro`, `data/bridge-logs`, `server.py`, `tests/`)
-- [ ] Create `commands.dev.json` (e2e test whitelist: `echo_test`, `run_tests`, `run_lint`, `run_typecheck`, `run_format_check`, `sleep_test`)
-- [ ] Create `Makefile` (`help`, `build`, `up`, `down`, `logs`, `test`, `lint`, `typecheck`, `format`, `shell`)
-- [ ] Create `.mcp.json` (registers `http://my-app:7357/mcp` as `bridge-dev` MCP server)
-- [ ] **Verify:** `make build` succeeds. `make up` starts the server (banner visible in `make logs`). `make down` stops it cleanly. `make test` exits (no tests yet — failure expected but container runs). Claude Code discovers `bridge-dev` tools via `tools/list` once `server.py` exists.
+- [o] Create `Dockerfile` (base stage: MCP SDK deps + server.py + non-root user; dev stage: adds pytest, ruff, mypy, pytest-asyncio)
+- [o] Create `docker-compose.yml` (service `my-app`, port `127.0.0.1:7357:7357`, volumes: `commands.dev.json:ro`, `data/bridge-logs`, `server.py`, `tests/`)
+- [o] Create `commands.dev.json` (e2e test whitelist: `echo_test`, `run_tests`, `run_lint`, `run_typecheck`, `run_format_check`, `sleep_test`)
+- [o] Create `Makefile` (`help`, `build`, `up`, `down`, `logs`, `test`, `lint`, `typecheck`, `format`, `shell`)
+- [o] Create `.mcp.json` (registers `http://my-app:7357/mcp` as `bridge-dev` MCP server)
+- [-] **Verify:** Deferred to end of 0.2 — `make build` requires `requirements.txt` and `server.py`.
 - **Files:** `Dockerfile`, `docker-compose.yml`, `commands.dev.json`, `Makefile`, `.mcp.json`
 
 ### 0.1 — Create requirements.txt
@@ -66,7 +66,13 @@ Legend:
   Run `pytest tests/ -v`, confirm all new tests fail with `ImportError` or `ModuleNotFoundError` (right reason: `server.py` does not exist yet).
 - [ ] **GREEN:** Create `server.py` with: pydantic models (`BridgeConfig`, `CommandEntry`, `CommandsConfig`, `CommandResult`, `LogEntry`) per SPECS.md §6.1; `load_config()` factory reading `BRIDGE_*` env vars; `load_commands(path)` parsing JSON into `CommandsConfig`. Run `pytest tests/ -v`, confirm all `TestCommandsConfig` tests pass.
 - [ ] **REFACTOR:** Clean up model definitions if needed (e.g., consolidate field validators). Keep tests green.
-- [ ] **Verify:** Create a test `commands.json` per SPECS.md §2.1 (including one command with a timeout override and one without). Run `python server.py` directly. Confirm banner shows correct command names, counts, and effective timeouts. Test invalid configs: remove a required field → pydantic error with field name; set `command` to empty array → custom validator error; malform JSON → clear parse error.
+- [ ] **Verify (0.0 + 0.2 combined):**
+  - `make build` succeeds.
+  - `make up` starts the server; `make logs` shows the startup banner.
+  - `make down` stops cleanly.
+  - `make test` runs the full test suite and passes.
+  - Claude Code discovers `bridge-dev` tools via `tools/list` (requires `make up`).
+  - Invalid config edge cases: remove a required field → pydantic error with field name; set `command` to empty array → custom validator error; malform JSON → clear parse error.
 - **Files:** `server.py` (create), `tests/test_server.py` (create)
 
 ### 0.3 — Tool registration and tools/list
