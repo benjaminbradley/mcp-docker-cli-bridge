@@ -1,4 +1,4 @@
-# Specifications — Docker CLI Access Bridge MCP
+# Specifications — MCP Docker CLI Bridge
 
 > **Status:** Approved
 > **Last updated:** 2026-04-01
@@ -14,7 +14,7 @@ The bridge uses Streamable HTTP transport as defined by MCP spec version 2025-03
 
 ```
 POST /mcp
-GET  /mcp   (for SSE streaming, if needed by client)
+GET  /mcp
 ```
 
 The MCP Python SDK handles protocol negotiation, JSON-RPC framing, and session management. The bridge code registers tools and handles tool calls; the SDK handles everything else.
@@ -52,7 +52,7 @@ Example response (for a whitelist with three commands):
     },
     {
       "name": "run_typecheck",
-      "description": "Execute: python -m mypy src/findworkbot/",
+      "description": "Execute: python -m mypy src/",
       "inputSchema": {
         "type": "object",
         "properties": {}
@@ -100,7 +100,7 @@ The `text` field contains a `CommandResult` model serialized to JSON (see §6.1)
   "content": [
     {
       "type": "text",
-      "text": "Command 'run_tests' timed out after 60s"
+      "text": "Command 'run_tests' timed out after 120s"
     }
   ],
   "isError": true
@@ -115,13 +115,7 @@ Bridge-level errors that set `isError: true`:
 
 ### 1.4 Unsupported MCP Features
 
-The bridge does not implement:
-- **Resources** — no file serving.
-- **Prompts** — no templated interactions.
-- **Sampling** — no LLM request forwarding.
-- **Resource subscriptions** — no change notifications.
-
-Requests for these capabilities receive standard MCP "method not found" responses from the SDK.
+The bridge does not implement Resources, Prompts, Sampling, or Resource Subscriptions. Requests for these capabilities receive standard MCP "method not found" responses from the SDK.
 
 ---
 
@@ -129,44 +123,55 @@ Requests for these capabilities receive standard MCP "method not found" response
 
 ### 2.1 File Format
 
-A JSON object where each key is a command name and each value is a command definition object.
+A JSON object with a `default_timeout` field and a `commands` object where each key is a command name and each value is a command definition.
 
 ```json
 {
-  "run_tests": {
-    "command": ["python", "-m", "pytest", "src/tests/", "-v"],
-    "allow_extra_args": true,
-    "cwd": "/app"
-  },
-  "run_lint": {
-    "command": ["python", "-m", "ruff", "check", "src/"],
-    "allow_extra_args": false,
-    "cwd": "/app"
-  },
-  "run_typecheck": {
-    "command": ["python", "-m", "mypy", "src/findworkbot/"],
-    "allow_extra_args": false,
-    "cwd": "/app"
-  },
-  "run_format": {
-    "command": ["python", "-m", "ruff", "format", "src/"],
-    "allow_extra_args": false,
-    "cwd": "/app"
+  "default_timeout": 60,
+  "commands": {
+    "run_tests": {
+      "command": ["python", "-m", "pytest", "src/tests/", "-v"],
+      "allow_extra_args": true,
+      "cwd": "/app",
+      "timeout": 120
+    },
+    "run_lint": {
+      "command": ["python", "-m", "ruff", "check", "src/"],
+      "allow_extra_args": false,
+      "cwd": "/app"
+    },
+    "run_typecheck": {
+      "command": ["python", "-m", "mypy", "src/"],
+      "allow_extra_args": false,
+      "cwd": "/app"
+    },
+    "run_format": {
+      "command": ["python", "-m", "ruff", "format", "src/"],
+      "allow_extra_args": false,
+      "cwd": "/app"
+    }
   }
 }
 ```
 
-### 2.2 Command Definition Fields
+### 2.2 Global Settings
+
+- `default_timeout` (integer, optional): Default subprocess timeout in seconds. Defaults to `60` if omitted. Applied to any command that does not specify its own `timeout`.
+
+### 2.3 Command Definition Fields
 
 - `command` (array of strings, required): The executable prefix. First element is the executable; remaining elements are fixed arguments. The array is passed directly to `subprocess.run` as the start of the argv list.
 - `allow_extra_args` (boolean, required): When `true`, the MCP tool schema includes an `args` parameter and caller-provided args are appended to the `command` array. When `false`, the tool schema has no `args` parameter.
 - `cwd` (string, required): Absolute path to the working directory for subprocess execution.
+- `timeout` (integer, optional): Per-command timeout override in seconds. If omitted, `default_timeout` applies. Useful for long-running commands like test suites.
 
-### 2.3 Validation at Startup
+### 2.4 Validation at Startup
 
-The whitelist file is parsed and validated using the `CommandEntry` and `CommandsConfig` pydantic models (see §6.1). The server exits with a non-zero exit code if pydantic validation fails — the error message includes field-level detail from pydantic's validation output.
+The whitelist file is parsed and validated using the `CommandsConfig` and `CommandEntry` pydantic models (see §6.1). The server exits with a non-zero exit code if pydantic validation fails — the error message includes field-level detail from pydantic's validation output.
 
-The server logs the number of commands loaded and their names on successful startup.
+On successful startup, the server logs:
+- Number of commands loaded and their names.
+- Effective timeout for each command (per-command override or global default).
 
 ---
 
@@ -198,6 +203,8 @@ The directory is volume-mounted from the host. The server creates the file on fi
 
 One JSON object per line, no trailing comma, newline-terminated. Each line is produced by `LogEntry.model_dump_json()` (see §6.1 for the pydantic model definition).
 
+Successful execution:
+
 ```json
 {
   "timestamp": "2026-04-01T14:22:05.123Z",
@@ -205,14 +212,16 @@ One JSON object per line, no trailing comma, newline-terminated. Each line is pr
   "args": ["--tb=short"],
   "exit_code": 0,
   "duration_ms": 2310,
-  "stdout_bytes": 1847,
+  "stdout": "===== 68 passed in 2.31s =====\n",
+  "stderr": "",
+  "stdout_bytes": 35,
   "stderr_bytes": 0,
   "rejected": false,
   "rejection_reason": null
 }
 ```
 
-Rejected request example:
+Rejected request:
 
 ```json
 {
@@ -221,12 +230,16 @@ Rejected request example:
   "args": ["--flag; rm -rf /"],
   "exit_code": null,
   "duration_ms": 0,
+  "stdout": null,
+  "stderr": null,
   "stdout_bytes": 0,
   "stderr_bytes": 0,
   "rejected": true,
   "rejection_reason": "Argument contains disallowed characters: '--flag; rm -rf /'"
 }
 ```
+
+Full stdout/stderr content is included for audit trail and debugging. Future: payload logging may be made configurable (on/off via `BRIDGE_LOG_PAYLOADS` env var) to manage log volume.
 
 ### 4.3 Write Behavior
 
@@ -245,7 +258,8 @@ All configuration is via environment variables with sensible defaults, loaded in
 | `BRIDGE_COMMANDS_FILE` | `/bridge/commands.json` | Path to the whitelist config |
 | `BRIDGE_LOG_DIR` | `/bridge/logs` | Directory for the JSONL log file |
 | `BRIDGE_LOG_FILE` | `bridge.jsonl` | Log file name within the log directory |
-| `BRIDGE_TIMEOUT` | `60` | Default subprocess timeout in seconds |
+
+Note: Timeout configuration lives in `commands.json` (§2.2 and §2.3), not in environment variables. This keeps timeout policy co-located with the command definitions that the operator controls.
 
 ---
 
@@ -261,6 +275,7 @@ class CommandEntry(BaseModel):
     command: list[str]              # Non-empty; first element is executable
     allow_extra_args: bool
     cwd: str
+    timeout: int | None = None     # Per-command override; None = use default
 
     @field_validator("command")
     @classmethod
@@ -270,9 +285,15 @@ class CommandEntry(BaseModel):
         return v
 
 
-class CommandsConfig(RootModel[dict[str, CommandEntry]]):
-    """The entire commands.json file. Keys are command names."""
-    pass
+class CommandsConfig(BaseModel):
+    """The entire commands.json file."""
+    default_timeout: int = 60
+    commands: dict[str, CommandEntry]
+
+    def effective_timeout(self, name: str) -> int:
+        """Return per-command timeout if set, otherwise default_timeout."""
+        entry = self.commands[name]
+        return entry.timeout if entry.timeout is not None else self.default_timeout
 
 
 class CommandResult(BaseModel):
@@ -289,6 +310,8 @@ class LogEntry(BaseModel):
     args: list[str] | None
     exit_code: int | None
     duration_ms: int
+    stdout: str | None              # Full content for audit
+    stderr: str | None              # Full content for audit
     stdout_bytes: int
     stderr_bytes: int
     rejected: bool
@@ -302,10 +325,9 @@ class BridgeConfig(BaseModel):
     commands_file: str = "/bridge/commands.json"
     log_dir: str = "/bridge/logs"
     log_file: str = "bridge.jsonl"
-    timeout: int = 60
 ```
 
-`BridgeConfig` fields are populated from environment variables with the `BRIDGE_` prefix (e.g., `BRIDGE_PORT` → `port`). This is done via a simple factory function that reads `os.environ` with fallbacks to the model defaults — not via pydantic-settings (avoids an additional dependency).
+`BridgeConfig` fields are populated from environment variables with the `BRIDGE_` prefix (e.g., `BRIDGE_PORT` → `port`). This is done via a factory function that reads `os.environ` with fallbacks to the model defaults — not via pydantic-settings (avoids an additional dependency).
 
 ### 6.2 Functions
 
@@ -325,15 +347,15 @@ server.py
 │   Check args are strings without metacharacters.
 │   Return None if valid, error message string if invalid.
 │
-├── execute_command(name, args, commands, timeout) → CommandResult
-│   Look up command, build argv, run subprocess.
-│   Return CommandResult.
+├── execute_command(name, args, config: CommandsConfig) → CommandResult
+│   Look up command, build argv, run subprocess with
+│   config.effective_timeout(name). Return CommandResult.
 │   Raise on timeout or exec failure.
 │
 ├── log_request(entry: LogEntry, log_dir, log_file)
 │   Append entry.model_dump_json() + newline to log file.
 │
-├── build_tools(commands) → list[Tool]
+├── build_tools(config: CommandsConfig) → list[Tool]
 │   Generate MCP Tool definitions from CommandsConfig.
 │   Commands with allow_extra_args get args in schema;
 │   others get empty schema.
@@ -343,7 +365,8 @@ server.py
 │   1. Extracts args from tool input (if schema allows)
 │   2. Validates args
 │   3. Calls execute_command → CommandResult
-│   4. Constructs LogEntry, calls log_request
+│   4. Constructs LogEntry (including full stdout/stderr),
+│      calls log_request
 │   5. Returns MCP tool result:
 │      content=result.model_dump_json(), isError=False
 │      or error message string, isError=True
@@ -376,7 +399,7 @@ Python 3.11 or higher (matching the MCP SDK's minimum requirement).
 
 ## 8. Consumer Integration Specifications
 
-These specs define what a host project (e.g., example-app) must provide to use the bridge. The bridge project itself does not contain these files.
+These specs define what a host project must provide to use the bridge. The bridge project itself does not contain these files.
 
 ### 8.1 Dockerfile Dev Stage
 
@@ -421,8 +444,6 @@ networks:
     name: ${BRIDGE_NETWORK:-dev-bridge}
 ```
 
-Key properties: the whitelist is mounted read-only, the bridge server is the container entrypoint (keeping it alive), and port 7357 is exposed on the network but not published to the host.
-
 ### 8.3 MCP Registration (.mcp.json)
 
 A file at the consumer project root that registers the bridge with Claude Code:
@@ -438,7 +459,7 @@ A file at the consumer project root that registers the bridge with Claude Code:
 }
 ```
 
-The `<compose-service-name>` is the Docker Compose service name as visible on the shared bridge network. For example-app this would be the app service name from `docker-compose.dev.yml`.
+The `<compose-service-name>` is the Docker Compose service name as visible on the shared bridge network.
 
 Alternatively, operators can register via CLI without committing to the repo:
 ```bash
@@ -466,11 +487,10 @@ test:
 
 The bridge is not involved. This mode switch gives the human operator the same targets regardless of whether the dev environment is active.
 
-### 8.5 Pre-commit Hook
+### 8.5 Pre-commit Hook (scripts/pre-commit)
 
-A script installed as `.git/hooks/pre-commit`. Two implementation options:
+A shell script installed as `.git/hooks/pre-commit`. Uses `curl` for HTTP and `node` for JSON parsing (both available in the Claude Code container by default).
 
-**Option A — curl with JSON-RPC** (no extra dependencies):
 ```bash
 #!/usr/bin/env bash
 set -euo pipefail
@@ -483,27 +503,34 @@ call_bridge() {
   response=$(curl -sf -X POST "$BRIDGE_URL" \
     -H "Content-Type: application/json" \
     -d "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"tools/call\",\"params\":{\"name\":\"$tool_name\",\"arguments\":{}}}" 2>&1) || {
-    echo "ERROR: Bridge unreachable at $BRIDGE_URL"
-    echo "Start the dev container: make dev-up"
+    echo "ERROR: Bridge unreachable at $BRIDGE_URL" >&2
+    echo "Is the dev container running? Start it with: make dev-up" >&2
     exit 1
   }
-  # Extract exit_code from the nested JSON result
+
   local exit_code
-  exit_code=$(echo "$response" | python3 -c "
-import sys, json
-r = json.load(sys.stdin)
-content = json.loads(r['result']['content'][0]['text'])
-print(content['exit_code'])
-")
+  exit_code=$(echo "$response" | node -e "
+    const chunks = [];
+    process.stdin.on('data', c => chunks.push(c));
+    process.stdin.on('end', () => {
+      const r = JSON.parse(chunks.join(''));
+      const content = JSON.parse(r.result.content[0].text);
+      process.stdout.write(String(content.exit_code));
+    });
+  ")
+
   if [ "$exit_code" -ne 0 ]; then
-    echo "FAILED: $tool_name (exit code $exit_code)"
-    echo "$response" | python3 -c "
-import sys, json
-r = json.load(sys.stdin)
-content = json.loads(r['result']['content'][0]['text'])
-print(content.get('stdout', ''))
-print(content.get('stderr', ''))
-"
+    echo "FAILED: $tool_name (exit code $exit_code)" >&2
+    echo "$response" | node -e "
+      const chunks = [];
+      process.stdin.on('data', c => chunks.push(c));
+      process.stdin.on('end', () => {
+        const r = JSON.parse(chunks.join(''));
+        const content = JSON.parse(r.result.content[0].text);
+        if (content.stdout) process.stderr.write(content.stdout);
+        if (content.stderr) process.stderr.write(content.stderr);
+      });
+    "
     exit 1
   fi
   echo "PASSED: $tool_name"
@@ -514,19 +541,11 @@ call_bridge "run_typecheck"
 call_bridge "run_tests"
 ```
 
-**Option B — Python MCP client script** (cleaner, requires mcp SDK):
-```bash
-#!/usr/bin/env bash
-exec python3 scripts/pre-commit-check.py run_lint run_typecheck run_tests
-```
-
-With a ~20-line Python script using the MCP client SDK. Preferred if the dev environment already has the SDK installed.
-
 ---
 
 ## 9. Consumer File Layout
 
-Files the consumer project provides (using example-app as the example):
+Files the consumer project provides:
 
 ```
 example-app/

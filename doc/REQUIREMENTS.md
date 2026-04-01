@@ -1,4 +1,4 @@
-# Requirements — Docker CLI Access Bridge MCP
+# Requirements — MCP Docker CLI Bridge
 
 > **Status:** Approved
 > **Last updated:** 2026-04-01
@@ -36,17 +36,23 @@ The bridge must expose each whitelisted command as an MCP tool. When a tool is c
 - **Tool discovery:** The bridge must respond to MCP `tools/list` requests with a tool definition for each command in the whitelist. Each tool definition includes the command name, a human-readable description (derived from the executable prefix), and an input schema.
 - **Tool invocation:** When a tool is called via MCP `tools/call`, the bridge executes the command via Python's `subprocess.run` with `shell=False`. The bridge constructs the full argument vector by prepending the command's configured executable prefix to any caller-provided arguments.
 - **Tool result:** The bridge returns a structured result containing `stdout` (string), `stderr` (string), and `exit_code` (integer). Non-zero exit codes are reported as successful tool results (the bridge faithfully reports what the subprocess returned). Only bridge-level failures (unknown command, validation errors, timeouts) are reported as MCP tool errors.
-- **Timeout:** A configurable global timeout (default: 60 seconds). Processes exceeding the timeout are killed and a tool error is returned.
+- **Timeout:** Each command has an effective timeout determined by: (1) a per-command timeout in the whitelist config, if set; otherwise (2) the global default timeout in the whitelist config. Processes exceeding the timeout are killed and a tool error is returned.
 
 ### 4.2 Command Whitelist
 
 The bridge must restrict execution to a predefined set of named commands. The whitelist is the **sole authorization mechanism** — any request for an unlisted command is rejected.
 
-Each whitelist entry defines:
+The whitelist config defines global settings and per-command entries:
+
+**Global settings:**
+- **Default timeout:** Global subprocess timeout in seconds (default: 60). Applied to any command that does not specify its own timeout.
+
+**Per-command entries:**
 - **Name:** A symbolic identifier that becomes the MCP tool name (e.g., `run_tests`, `run_lint`).
 - **Executable prefix:** The base command and any fixed arguments (e.g., `["python", "-m", "pytest"]`).
 - **Extra arguments allowed:** A boolean flag. When `true`, the generated MCP tool schema includes an `args` parameter that accepts additional arguments. When `false`, the tool schema exposes no `args` parameter — the constraint is enforced at the protocol level.
 - **Working directory:** The directory from which the command executes (e.g., `/app`).
+- **Timeout (optional):** Per-command timeout override in seconds. If omitted, the global default timeout applies.
 
 The whitelist must be:
 - **Externally configured:** Defined in a JSON file, not hardcoded in the server.
@@ -67,13 +73,14 @@ The bridge must log every tool invocation and its outcome to a persistent JSONL 
 - Arguments provided
 - Exit code returned
 - Duration in milliseconds
+- Full stdout and stderr content (for audit trail and debugging)
 - Stdout length (bytes)
 - Stderr length (bytes)
 - Whether the request was rejected (and the rejection reason, if applicable)
 
 The log directory must be volume-mounted from the host so logs persist across container restarts and rebuilds.
 
-Stdout/stderr content is **not** logged (to avoid unbounded log growth). The log captures metadata only.
+Future: payload logging (stdout/stderr content) may be made configurable (on/off) to manage log volume in high-throughput environments.
 
 ### 4.5 Error Handling
 

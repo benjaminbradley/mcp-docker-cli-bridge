@@ -9,7 +9,7 @@ The original bridge design used stdlib-only Python with no external dependencies
 
 ADR 001 introduced the MCP Python SDK as a dependency, which transitively installs pydantic (for schema validation), starlette (for ASGI), uvicorn (for serving), and related packages. These are now present in the dev container regardless of whether the bridge code uses them directly.
 
-Separately, a review of the Gemini-authored requirements document suggested adopting FastAPI for routing and shlex for shell command safety. These were rejected: the MCP SDK handles its own routing (no need for a separate web framework), and shlex is designed for shell escaping — irrelevant when using `shell=False` subprocess execution, which bypasses the shell entirely.
+A review of an external requirements document suggested adopting FastAPI for routing and shlex for shell command safety. Both were rejected: the MCP SDK handles its own routing (no need for a separate web framework), and shlex is designed for shell escaping — irrelevant when using `shell=False` subprocess execution, which bypasses the shell entirely.
 
 ## Decision
 
