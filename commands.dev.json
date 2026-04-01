@@ -28,6 +28,11 @@
       "allow_extra_args": false,
       "cwd": "/bridge"
     },
+    "run_format": {
+      "command": ["python", "-m", "ruff", "format"],
+      "allow_extra_args": true,
+      "cwd": "/bridge"
+    },
     "sleep_test": {
       "command": ["sleep"],
       "allow_extra_args": true,
