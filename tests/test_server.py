@@ -302,7 +302,7 @@ class TestToolHandlers:
         config = self._make_config(
             echo=dict(command=["echo", "hello"], allow_extra_args=True, cwd="/tmp")
         )
-        handler = server._create_tool_handler("echo", config)
+        handler = server._create_tool_handler("echo", config, "/tmp", "bridge-test.jsonl")
         result_str = await handler(args=["world"])
         data = json.loads(result_str)
         assert "stdout" in data
@@ -322,7 +322,7 @@ class TestToolHandlers:
                 cwd="/tmp",
             )
         )
-        handler = server._create_tool_handler("fail", config)
+        handler = server._create_tool_handler("fail", config, "/tmp", "bridge-test.jsonl")
         result_str = await handler()
         data = json.loads(result_str)
         assert data["exit_code"] == 1
@@ -335,7 +335,7 @@ class TestToolHandlers:
         config = self._make_config(
             echo=dict(command=["echo"], allow_extra_args=True, cwd="/tmp")
         )
-        handler = server._create_tool_handler("echo", config)
+        handler = server._create_tool_handler("echo", config, "/tmp", "bridge-test.jsonl")
         with pytest.raises(Exception, match=";"):
             await handler(args=["--flag; rm -rf /"])
 
@@ -347,7 +347,7 @@ class TestToolHandlers:
         config = self._make_config(
             slow=dict(command=["sleep", "5"], allow_extra_args=False, cwd="/tmp", timeout=1)
         )
-        handler = server._create_tool_handler("slow", config)
+        handler = server._create_tool_handler("slow", config, "/tmp", "bridge-test.jsonl")
         with pytest.raises(Exception, match="timed out after 1s"):
             await handler()
 
@@ -359,7 +359,7 @@ class TestToolHandlers:
         config = self._make_config(
             bad=dict(command=["nonexistent_xyz"], allow_extra_args=False, cwd="/tmp")
         )
-        handler = server._create_tool_handler("bad", config)
+        handler = server._create_tool_handler("bad", config, "/tmp", "bridge-test.jsonl")
         with pytest.raises(Exception, match="not found"):
             await handler()
 
@@ -374,7 +374,7 @@ class TestToolHandlers:
             config = self._make_config(
                 echo=dict(command=["echo"], allow_extra_args=False, cwd="/tmp")
             )
-            handler = server._create_tool_handler("echo", config)
+            handler = server._create_tool_handler("echo", config, "/tmp", "bridge-test.jsonl")
             with pytest.raises(Exception, match="busy"):
                 await handler()
         finally:
@@ -449,3 +449,115 @@ class TestLogRequest:
             "rejected", "rejection_reason",
         }
         assert expected_keys <= set(data.keys())
+
+
+class TestLogIntegration:
+    """Tests for log_request wired into tool handlers."""
+
+    def _make_config(self, **commands):
+        from server import CommandEntry, CommandsConfig
+
+        return CommandsConfig(
+            commands={
+                name: CommandEntry(**kwargs) for name, kwargs in commands.items()
+            }
+        )
+
+    def _reset_lock(self):
+        import server
+
+        server._lock = asyncio.Lock()
+        server._current_command = None
+
+    def _read_log(self, log_dir, filename="bridge.jsonl"):
+        import json
+        from pathlib import Path
+
+        lines = (Path(log_dir) / filename).read_text().splitlines()
+        return [json.loads(line) for line in lines]
+
+    @pytest.mark.asyncio
+    async def test_successful_call_logged(self, tmp_path):
+        import server
+
+        self._reset_lock()
+        config = self._make_config(
+            echo=dict(command=["echo", "hi"], allow_extra_args=False, cwd="/tmp")
+        )
+        handler = server._create_tool_handler("echo", config, str(tmp_path), "bridge.jsonl")
+        await handler()
+        entries = self._read_log(tmp_path)
+        assert len(entries) == 1
+        assert entries[0]["rejected"] is False
+        assert entries[0]["exit_code"] == 0
+
+    @pytest.mark.asyncio
+    async def test_rejected_call_logged_with_reason(self, tmp_path):
+        import server
+
+        self._reset_lock()
+        config = self._make_config(
+            echo=dict(command=["echo"], allow_extra_args=True, cwd="/tmp")
+        )
+        handler = server._create_tool_handler("echo", config, str(tmp_path), "bridge.jsonl")
+        with pytest.raises(Exception):
+            await handler(args=["bad; arg"])
+        entries = self._read_log(tmp_path)
+        assert len(entries) == 1
+        assert entries[0]["rejected"] is True
+        assert entries[0]["rejection_reason"] is not None
+        assert entries[0]["stdout"] is None
+        assert entries[0]["stderr"] is None
+
+    @pytest.mark.asyncio
+    async def test_busy_rejection_logged(self, tmp_path):
+        import server
+
+        server._lock = asyncio.Lock()
+        server._current_command = "other_cmd"
+        await server._lock.acquire()
+        try:
+            config = self._make_config(
+                echo=dict(command=["echo"], allow_extra_args=False, cwd="/tmp")
+            )
+            handler = server._create_tool_handler(
+                "echo", config, str(tmp_path), "bridge.jsonl"
+            )
+            with pytest.raises(Exception, match="busy"):
+                await handler()
+        finally:
+            server._lock.release()
+            server._current_command = None
+
+        entries = self._read_log(tmp_path)
+        assert len(entries) == 1
+        assert entries[0]["rejected"] is True
+        assert "other_cmd" in entries[0]["rejection_reason"]
+
+    @pytest.mark.asyncio
+    async def test_duration_ms_nonzero_for_executed_commands(self, tmp_path):
+        import server
+
+        self._reset_lock()
+        # Use python -c "pass" — interpreter startup guarantees duration > 1ms
+        config = self._make_config(
+            py=dict(command=["python", "-c", "pass"], allow_extra_args=False, cwd="/tmp")
+        )
+        handler = server._create_tool_handler("py", config, str(tmp_path), "bridge.jsonl")
+        await handler()
+        entries = self._read_log(tmp_path)
+        assert entries[0]["duration_ms"] > 0
+
+    @pytest.mark.asyncio
+    async def test_duration_ms_zero_for_rejected_requests(self, tmp_path):
+        import server
+
+        self._reset_lock()
+        config = self._make_config(
+            echo=dict(command=["echo"], allow_extra_args=True, cwd="/tmp")
+        )
+        handler = server._create_tool_handler("echo", config, str(tmp_path), "bridge.jsonl")
+        with pytest.raises(Exception):
+            await handler(args=["bad; arg"])
+        entries = self._read_log(tmp_path)
+        assert entries[0]["duration_ms"] == 0

@@ -5,7 +5,8 @@ import json
 import os
 import subprocess
 import sys
-from datetime import datetime
+import time
+from datetime import datetime, timezone
 from pathlib import Path
 
 from mcp.server.fastmcp import FastMCP
@@ -213,7 +214,9 @@ def build_tools(config: CommandsConfig) -> list[Tool]:
 # ---------------------------------------------------------------------------
 
 
-def _create_tool_handler(name: str, commands: CommandsConfig):
+def _create_tool_handler(
+    name: str, commands: CommandsConfig, log_dir: str, log_file: str
+):
     """Return an async handler function for the named command."""
     entry = commands.commands[name]
 
@@ -221,16 +224,67 @@ def _create_tool_handler(name: str, commands: CommandsConfig):
         global _current_command
         if _lock.locked():
             busy = _current_command
-            raise Exception(
-                f"Bridge is busy executing '{busy}'. Retry after it completes."
+            rejection = f"Bridge is busy executing '{busy}'. Retry after it completes."
+            log_request(
+                LogEntry(
+                    timestamp=datetime.now(timezone.utc),
+                    command=name,
+                    args=args,
+                    exit_code=None,
+                    duration_ms=0,
+                    stdout=None,
+                    stderr=None,
+                    stdout_bytes=0,
+                    stderr_bytes=0,
+                    rejected=True,
+                    rejection_reason=rejection,
+                ),
+                log_dir,
+                log_file,
             )
+            raise Exception(rejection)
         await _lock.acquire()
         _current_command = name
         try:
             if err := validate_args(args):
+                log_request(
+                    LogEntry(
+                        timestamp=datetime.now(timezone.utc),
+                        command=name,
+                        args=args,
+                        exit_code=None,
+                        duration_ms=0,
+                        stdout=None,
+                        stderr=None,
+                        stdout_bytes=0,
+                        stderr_bytes=0,
+                        rejected=True,
+                        rejection_reason=err,
+                    ),
+                    log_dir,
+                    log_file,
+                )
                 raise Exception(err)
+            t0 = time.monotonic()
             try:
                 result = execute_command(name, args, commands)
+                duration_ms = int((time.monotonic() - t0) * 1000)
+                log_request(
+                    LogEntry(
+                        timestamp=datetime.now(timezone.utc),
+                        command=name,
+                        args=args,
+                        exit_code=result.exit_code,
+                        duration_ms=duration_ms,
+                        stdout=result.stdout,
+                        stderr=result.stderr,
+                        stdout_bytes=len(result.stdout.encode()),
+                        stderr_bytes=len(result.stderr.encode()),
+                        rejected=False,
+                    ),
+                    log_dir,
+                    log_file,
+                )
                 return result.model_dump_json()
             except subprocess.TimeoutExpired:
                 raise Exception(
@@ -260,11 +314,13 @@ def _create_tool_handler(name: str, commands: CommandsConfig):
         return handler_no_args
 
 
-def _register_tools(mcp: FastMCP, commands: CommandsConfig) -> None:
+def _register_tools(
+    mcp: FastMCP, commands: CommandsConfig, log_dir: str, log_file: str
+) -> None:
     """Register one MCP tool per whitelist entry."""
     for name, entry in commands.commands.items():
         description = "Execute: " + " ".join(entry.command)
-        handler = _create_tool_handler(name, commands)
+        handler = _create_tool_handler(name, commands, log_dir, log_file)
         mcp.add_tool(handler, name=name, description=description)
 
 
@@ -285,7 +341,7 @@ def main() -> None:
     print(f"Loaded {len(commands.commands)} commands: {cmd_summary}")
 
     mcp = FastMCP("bridge", host=config.host, port=config.port)
-    _register_tools(mcp, commands)
+    _register_tools(mcp, commands, config.log_dir, config.log_file)
     mcp.run(transport="streamable-http")
 
 
