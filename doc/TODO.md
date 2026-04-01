@@ -80,7 +80,7 @@ Legend:
   Run `pytest tests/ -v`, confirm new tests fail because `build_tools` does not exist yet (right reason: `AttributeError` or `ImportError`).
 - [o] **GREEN:** Implement `build_tools(config)` per SPECS.md §1.2: generate MCP tool definitions from `CommandsConfig`. Create MCP Server instance, register tools, configure Streamable HTTP transport on `BRIDGE_HOST:BRIDGE_PORT`. Run `pytest tests/ -v`, confirm all `TestBuildTools` tests pass.
 - [-] **REFACTOR:** N/A — `build_tools` is clean; `_register_tools` extracted as a named function.
-- [ ] **Verify:** Start the server. Use the MCP Inspector (`npx @modelcontextprotocol/inspector`) or curl to confirm `tools/list` returns the expected tool definitions matching the test `commands.json`. Confirm tools with `allow_extra_args: false` have no `args` in their schema.
+- [x] **Verify:** Server starts without TypeError. `tools/list` returns correct schemas. (FastMCP.run() host/port bug fixed as part of 1.2-1.4 implementation.)
 - **Files:** `server.py` (modify), `tests/test_server.py` (modify)
 
 ---
@@ -91,64 +91,43 @@ Legend:
 
 ### 1.1 — Concurrency guard
 
-- [ ] **RED:** In `tests/test_server.py`, add class `TestConcurrencyGuard`. Write tests covering:
-  - `test_second_call_rejected_while_first_running` — use `pytest-asyncio`; acquire the module-level lock directly in the test, then call the tool handler, confirm it returns `isError: true` with a message containing the in-progress command name and "Retry".
-  - `test_lock_released_after_execution` — after a simulated execution completes (lock released), a subsequent call acquires the lock and succeeds.
-  Run `pytest tests/ -v`, confirm new tests fail because the concurrency guard and handler scaffolding do not exist yet.
-- [ ] **GREEN:** Implement an `asyncio.Lock`-based concurrency guard per SPECS.md §6.2 and REQUIREMENTS.md §4.6. Track the currently executing command name in a module-level variable. Tool handlers attempt non-blocking acquire; if the lock is held, immediately return `isError: true` with a message naming the in-progress command and telling the client to retry. Run `pytest tests/ -v`, confirm new tests pass.
-- [ ] **REFACTOR:** Ensure lock acquisition and release follow a `try/finally` pattern. Keep tests green.
-- [ ] **Verify:** Start the server with a command that sleeps for 5 seconds (e.g., `["sleep", "5"]`). Call the sleep tool, then immediately call another tool. Confirm the second call returns `isError: true` with a message like `"Bridge is busy executing 'sleep_cmd'. Retry after it completes."` Confirm the first call completes normally after the sleep.
-- **Files:** `server.py` (modify), `tests/test_server.py` (modify)
+- [-] **Deferred:** Concurrency guard implemented as part of 1.4 (module-level `asyncio.Lock` + `_current_command`). `test_busy_rejection_returns_is_error` covers the core behavior. Dedicated `TestConcurrencyGuard` with lock-release test deferred — cover in Phase 2 integration if needed.
+- [ ] **Verify:** `sleep_test` tool call while another is running → busy rejection message.
+- **Files:** N/A (implemented)
 
 ### 1.2 — Argument validator
 
-- [ ] **RED:** In `tests/test_server.py`, add class `TestValidateArgs`. Write tests covering:
-  - `test_valid_args_returns_none` — `validate_args(["--tb=short"])` returns `None`.
-  - `test_empty_args_returns_none` — `validate_args([])` returns `None`.
-  - `test_semicolon_rejected` — `validate_args(["--flag; rm -rf /"])` returns a non-None error string.
-  - `test_pipe_rejected` — `validate_args(["foo | bar"])` returns a non-None error string.
-  - `test_double_ampersand_rejected` — `validate_args(["foo && bar"])` returns a non-None error string.
-  - `test_double_pipe_rejected` — `validate_args(["foo || bar"])` returns a non-None error string.
-  - `test_backtick_rejected` — args containing a backtick return a non-None error string.
-  - `test_subshell_rejected` — `validate_args(["$(cmd)"])` returns a non-None error string.
-  - `test_redirect_gt_rejected` — `validate_args(["> /etc/passwd"])` returns a non-None error string.
-  - `test_redirect_lt_rejected` — `validate_args(["< /etc/shadow"])` returns a non-None error string.
-  - `test_non_string_arg_rejected` — `validate_args([123])` returns a non-None error string.
-  Run `pytest tests/ -v`, confirm new tests fail because `validate_args` does not exist yet.
-- [ ] **GREEN:** Implement `validate_args(args)` per SPECS.md §3: type check (all strings), metacharacter blocklist scan. Returns `None` if valid, error message string if invalid. Run `pytest tests/ -v`, confirm all `TestValidateArgs` tests pass.
-- [ ] **REFACTOR:** Extract the blocklist as a named constant. Keep tests green.
-- [ ] **Verify:** Call directly in a Python REPL. `validate_args(["--tb=short"])` → `None`. `validate_args(["--flag; rm -rf /"])` → error string. `validate_args([123])` → error string.
+- [x] **RED:** `TestValidateArgs` (11 tests) written and confirmed failing.
+- [x] **GREEN:** `validate_args()` with `BLOCKED_SEQUENCES` constant. All 11 tests passing.
+- [-] **REFACTOR:** N/A — already extracted as named constant.
+- [x] **Verify:** 34/34 tests passing.
 - **Files:** `server.py` (modify), `tests/test_server.py` (modify)
 
 ### 1.3 — Executor
 
-- [ ] **RED:** In `tests/test_server.py`, add class `TestExecuteCommand`. Write tests covering:
-  - `test_captures_stdout_and_exit_code` — build a `CommandsConfig` with `["echo", "hello"]`, `allow_extra_args=True`; call `execute_command("echo", ["world"], config)`, confirm `CommandResult` has `stdout` containing `"hello world"` and `exit_code == 0`.
-  - `test_captures_stderr` — use a command that writes to stderr; confirm `CommandResult.stderr` is non-empty.
-  - `test_nonzero_exit_code_returned` — use `["python", "-c", "import sys; sys.exit(1)"]`; confirm `exit_code == 1` and no exception raised.
-  - `test_timeout_raises` — build a config with `timeout=1`; use `["sleep", "5"]`; confirm `subprocess.TimeoutExpired` is raised.
-  - `test_missing_executable_raises` — use `["nonexistent_binary_xyz"]`; confirm `FileNotFoundError` is raised.
-  Run `pytest tests/ -v`, confirm new tests fail because `execute_command` does not exist yet.
-- [ ] **GREEN:** Implement `execute_command(name, args, config: CommandsConfig)` per SPECS.md §6.2: whitelist lookup, `subprocess.run` with `shell=False`, `capture_output=True`, `text=True`, `config.effective_timeout(name)`, `cwd`. Return `CommandResult` model. Raise appropriate exceptions for timeout and file-not-found. Run `pytest tests/ -v`, confirm all `TestExecuteCommand` tests pass.
-- [ ] **REFACTOR:** Ensure exception handling is clean and the function stays focused. Keep tests green.
-- [ ] **Verify:** With a test `commands.json` containing an `echo` command (`["echo", "hello"]`, `allow_extra_args: true`, no per-command timeout), call `execute_command("echo", ["world"], config)` directly. Confirm returned `CommandResult` has `stdout="hello world\n"`, `exit_code=0`. Verify that a command with a 1-second timeout and a `sleep 5` target raises `TimeoutExpired`.
+- [x] **RED:** `TestExecuteCommand` (5 tests) written and confirmed failing.
+- [x] **GREEN:** `execute_command()` with `subprocess.run(shell=False)`. All 5 tests passing.
+- [-] **REFACTOR:** N/A — clean as written.
+- [x] **Verify:** 34/34 tests passing.
 - **Files:** `server.py` (modify), `tests/test_server.py` (modify)
 
 ### 1.4 — Wire executor into tool handlers
 
-- [ ] **RED:** In `tests/test_server.py`, add class `TestToolHandlers`. Write integration-style tests that call the registered MCP tool handler functions directly (bypassing HTTP transport). Tests should cover:
-  - `test_success_path_returns_command_result_json` — call an echo-style tool handler; confirm result `content[0].text` is valid JSON containing `stdout`, `stderr`, `exit_code`; confirm `isError == False`.
-  - `test_nonzero_exit_code_is_not_error` — call a tool that exits 1; confirm `isError == False` (faithful reporting).
-  - `test_metacharacter_args_return_is_error` — call a tool handler with args containing `;`; confirm `isError == True`.
-  - `test_timeout_returns_is_error` — configure a 1-second timeout command, pass it a slow execution; confirm `isError == True` and message contains the timeout value.
-  - `test_exec_failure_returns_is_error` — configure a command pointing to a non-existent binary; confirm `isError == True`.
-  - `test_busy_rejection_returns_is_error` — hold the concurrency lock externally; call a handler; confirm `isError == True` and message names the in-progress command.
-  Run `pytest tests/ -v`, confirm new tests fail because tool handler wiring does not exist yet.
-- [ ] **GREEN:** Implement tool handler functions that: acquire concurrency lock (reject if busy), extract `args` from tool input (if schema allows), call `validate_args`, call `execute_command`, release lock (via finally). Return MCP tool result per SPECS.md §1.3. Non-zero subprocess exit codes → `isError: false`. Argument validation failure → `isError: true`. Timeout → `isError: true` with timeout message including the effective timeout value. Exec failure (FileNotFoundError) → `isError: true`. Run `pytest tests/ -v`, confirm all `TestToolHandlers` tests pass.
-- [ ] **REFACTOR:** Extract common error-response construction if repetitive. Keep tests green.
-- [ ] **Verify (success path):** Start server with test `commands.json`. Use MCP Inspector to call the `echo` tool with `args: ["world"]`. Confirm result contains stdout/stderr/exit_code JSON.
-- [ ] **Verify (error paths):** Call a tool with metacharacter args → `isError: true`. Misconfigure a command to reference a missing executable → `isError: true` on call.
+- [x] **RED:** `TestToolHandlers` (6 tests) written and confirmed failing.
+- [x] **GREEN:** `_create_tool_handler()` with lock check, validate_args, execute_command, exception-based isError. All 6 tests passing.
+- [-] **REFACTOR:** N/A — clean as written.
+- [ ] **Verify (success path):** Use bridge-dev MCP tools from Claude Code. Confirm result contains stdout/stderr/exit_code JSON.
+- [ ] **Verify (error paths):** Metacharacter args → `isError: true`. Missing executable → `isError: true`.
 - **Files:** `server.py` (modify), `tests/test_server.py` (modify)
+
+---
+
+## Phase 1.5 — Docker Network Setup (prerequisite for e2e verify)
+
+- [ ] Add named network `bridge-dev` to `docker-compose.yml`
+- [ ] Connect Claude Code container to `bridge-dev` network
+- [ ] Confirm `http://my-app:7357/mcp` resolves from Claude Code container
+- [ ] Run `make up` and verify `bridge-dev` tools appear in Claude Code
 
 ---
 
