@@ -49,13 +49,13 @@ Legend:
 
 > **Infrastructure task — no TDD cycle.** This task installs dependencies with no testable logic. Verification is manual (`pip install`).
 
-- [ ] Create `requirements.txt` at project root with `mcp>=1.1.0` and pydantic and any other dependencies imported directly by the app (don't rely on mcp to pull them in).
-- [ ] **Verify:** `pip install -r requirements.txt` in a clean venv installs the MCP SDK and its transitive dependencies (including pydantic, starlette, uvicorn).
+- [o] Create `requirements.txt` at project root with `mcp>=1.1.0` and pydantic and any other dependencies imported directly by the app (don't rely on mcp to pull them in).
+- [-] **Verify:** Deferred to 0.2 combined verify (requires `make build`).
 - **Files:** `requirements.txt`
 
 ### 0.2 — Create server.py with pydantic models and config loader
 
-- [ ] **RED:** In `tests/test_server.py`, add class `TestCommandsConfig`. Write tests covering:
+- [o] **RED:** In `tests/test_server.py`, add class `TestCommandsConfig`. Write tests covering:
   - `test_valid_config_parses_correctly` — a fully-populated `CommandsConfig` dict round-trips through the model with correct field values.
   - `test_missing_required_field_raises` — omitting `command` from a `CommandEntry` raises `ValidationError`.
   - `test_wrong_type_for_command_raises` — setting `command` to a string (not list) raises `ValidationError`.
@@ -64,8 +64,8 @@ Legend:
   - `test_effective_timeout_falls_back_to_default` — a command with `timeout=None` and `default_timeout=60` returns `60` from `effective_timeout()`.
   - `test_default_timeout_defaults_to_60` — `CommandsConfig` with no `default_timeout` field has `default_timeout == 60`.
   Run `pytest tests/ -v`, confirm all new tests fail with `ImportError` or `ModuleNotFoundError` (right reason: `server.py` does not exist yet).
-- [ ] **GREEN:** Create `server.py` with: pydantic models (`BridgeConfig`, `CommandEntry`, `CommandsConfig`, `CommandResult`, `LogEntry`) per SPECS.md §6.1; `load_config()` factory reading `BRIDGE_*` env vars; `load_commands(path)` parsing JSON into `CommandsConfig`. Run `pytest tests/ -v`, confirm all `TestCommandsConfig` tests pass.
-- [ ] **REFACTOR:** Clean up model definitions if needed (e.g., consolidate field validators). Keep tests green.
+- [o] **GREEN:** Create `server.py` with: pydantic models (`BridgeConfig`, `CommandEntry`, `CommandsConfig`, `CommandResult`, `LogEntry`) per SPECS.md §6.1; `load_config()` factory reading `BRIDGE_*` env vars; `load_commands(path)` parsing JSON into `CommandsConfig`. Run `pytest tests/ -v`, confirm all `TestCommandsConfig` tests pass.
+- [-] **REFACTOR:** No refactoring needed — models are clean as written.
 - [ ] **Verify (0.0 + 0.2 combined):**
   - `make build` succeeds.
   - `make up` starts the server; `make logs` shows the startup banner.
