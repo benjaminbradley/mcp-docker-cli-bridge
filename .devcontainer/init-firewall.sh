@@ -104,6 +104,12 @@ echo "Host network detected as: $HOST_NETWORK"
 iptables -A INPUT -s "$HOST_NETWORK" -j ACCEPT
 iptables -A OUTPUT -d "$HOST_NETWORK" -j ACCEPT
 
+# Allow traffic to/from the bridge-dev Docker network (MCP server at my-app:7357)
+BRIDGE_DEV_SUBNET="172.21.0.0/24"
+echo "Allowing Docker bridge-dev subnet: $BRIDGE_DEV_SUBNET"
+iptables -A INPUT -s "$BRIDGE_DEV_SUBNET" -j ACCEPT
+iptables -A OUTPUT -d "$BRIDGE_DEV_SUBNET" -j ACCEPT
+
 # Set default policies to DROP first
 iptables -P INPUT DROP
 iptables -P FORWARD DROP
