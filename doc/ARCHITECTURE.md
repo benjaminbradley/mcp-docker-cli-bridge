@@ -2,7 +2,7 @@
 
 > **Status:** Approved
 > **Last updated:** 2026-04-01
-> **References:** [ADR 001 — MCP Transport](adr/001-mcp-transport.md)
+> **References:** [ADR 001 — MCP Transport](adr/001-mcp-transport.md) · [ADR 002 — Pydantic Models](adr/002-pydantic-models.md)
 
 ---
 
@@ -50,7 +50,7 @@ The human operator bypasses the bridge entirely, using `make` targets that `dock
 
 ## 2. Bridge Server Components
 
-The server is a single Python file (`server.py`) using the MCP Python SDK for the transport layer and Python stdlib for command execution. It has five internal responsibilities:
+The server is a single Python file (`server.py`) using the MCP Python SDK for the transport layer, pydantic for data validation and serialization, and Python stdlib for command execution. It has five internal responsibilities:
 
 ### 2.1 MCP Tool Provider
 
@@ -64,11 +64,11 @@ Tool schemas are derived from the whitelist:
 
 ### 2.2 Whitelist Loader
 
-Reads and validates `commands.json` once at startup. Builds an in-memory lookup dict keyed by command name. If the config file is missing, malformed, or contains invalid entries, the server exits immediately with a clear error message. There is no hot-reload — changing the whitelist requires a container restart.
+Reads `commands.json` once at startup and validates it against a pydantic model (`CommandsConfig` containing `CommandEntry` instances). Invalid config — missing fields, wrong types, empty command arrays — fails with pydantic's field-level error messages and exits the server immediately. There is no hot-reload — changing the whitelist requires a container restart.
 
 ### 2.3 Executor
 
-Resolves a command name to its whitelist entry, constructs the full argument vector (executable prefix + optional caller args), and calls `subprocess.run` with `shell=False`, `capture_output=True`, `text=True`, `timeout`, and `cwd` from the whitelist entry. Returns stdout, stderr, and exit code. Catches `subprocess.TimeoutExpired` and `FileNotFoundError` and translates them to MCP tool errors.
+Resolves a command name to its whitelist entry, constructs the full argument vector (executable prefix + optional caller args), and calls `subprocess.run` with `shell=False`, `capture_output=True`, `text=True`, `timeout`, and `cwd` from the whitelist entry. Returns a typed `CommandResult` (stdout, stderr, exit_code). Catches `subprocess.TimeoutExpired` and `FileNotFoundError` and translates them to MCP tool errors.
 
 ### 2.4 Argument Validator
 
@@ -76,7 +76,7 @@ A pure function called before execution. Checks that all caller-provided argumen
 
 ### 2.5 Request Logger
 
-Appends a single JSONL line per tool invocation to a log file. The log entry is written after the request completes (or fails), capturing metadata only: timestamp, command name, args, exit code, duration in milliseconds, stdout/stderr byte lengths, and rejection reason if applicable. Stdout/stderr content is not logged.
+Constructs a `LogEntry` pydantic model per tool invocation and appends its JSON serialization (`model_dump_json()`) as a single line to a JSONL log file. The entry is written after the request completes (or fails), capturing metadata only: timestamp, command name, args, exit code, duration in milliseconds, stdout/stderr byte lengths, and rejection reason if applicable. Stdout/stderr content is not logged.
 
 The logger opens and closes the file per write (append mode) to avoid holding file handles and to ensure log entries are flushed even if the server crashes.
 
@@ -184,7 +184,8 @@ parent/
 │       ├── SPECS.md
 │       ├── TODO.md
 │       └── adr/
-│           └── 001-mcp-transport.md
+│           ├── 001-mcp-transport.md
+│           └── 002-pydantic-models.md
 │
 ├── find-work-bot/               # Consumer project A
 │   ├── commands.json            # FWB-specific whitelist
@@ -216,28 +217,23 @@ Optional:
 
 ## 6. Data Model
 
-The bridge has no persistent data model. Its only data structures are:
+The bridge has no persistent data model. Its runtime data structures are defined as pydantic models (see SPECS.md §6.1 for definitions):
 
 ### 6.1 Whitelist Entry (in-memory, loaded from commands.json)
 
-Per-command configuration read at startup:
-- `name` — symbolic identifier (the MCP tool name and the lookup key).
-- `command` — executable prefix as an array of strings.
-- `allow_extra_args` — boolean, whether the tool schema exposes an `args` parameter.
-- `cwd` — working directory for the subprocess.
+`CommandEntry` — per-command configuration read at startup: command name (dict key), executable prefix (`command`), extra args toggle (`allow_extra_args`), and working directory (`cwd`). Validated by pydantic on load; invalid config exits the server with detailed field-level errors.
 
-### 6.2 Log Entry (appended to JSONL file)
+### 6.2 Command Result (transient, per invocation)
 
-Per-request metadata, written after each tool invocation completes:
-- `timestamp` — ISO 8601.
-- `command` — tool name from request (or `null` if parse failed).
-- `args` — arguments array from request.
-- `exit_code` — subprocess exit code (or `null` if not executed).
-- `duration_ms` — wall-clock execution time in milliseconds.
-- `stdout_bytes` — length of captured stdout.
-- `stderr_bytes` — length of captured stderr.
-- `rejected` — boolean.
-- `rejection_reason` — string (or `null` if not rejected).
+`CommandResult` — subprocess execution output: `stdout`, `stderr`, `exit_code`. Serialized to JSON for the MCP tool result text field.
+
+### 6.3 Log Entry (appended to JSONL file)
+
+`LogEntry` — per-request metadata: timestamp, command, args, exit code, duration, stdout/stderr byte lengths, rejection status. Serialized via `model_dump_json()` and appended to the log file.
+
+### 6.4 Server Configuration
+
+`BridgeConfig` — server settings loaded from `BRIDGE_*` environment variables with defaults. Validated at startup.
 
 ---
 
@@ -257,7 +253,7 @@ The bridge's security posture is designed for a trusted dev-only network, not ho
 
 ## 8. Constraints and Dependencies
 
-- **Python MCP SDK.** The server depends on the `mcp` package and its transitive dependencies. Dependencies are declared in `requirements.txt` and installed in the dev Docker stage.
+- **Python MCP SDK + pydantic.** The server depends on the `mcp` package (which transitively installs pydantic, starlette, uvicorn). The bridge imports from both `mcp` and `pydantic` directly. Dependencies are declared in `requirements.txt` and installed in the dev Docker stage. See ADR 002 for the rationale on using pydantic.
 - **Single-threaded tool execution.** One command at a time. The MCP SDK may handle concurrent transport-level requests, but tool execution is serialized. Sufficient for sequential dev tool invocations.
 - **No hot-reload.** Whitelist changes require a container restart. This is a feature — it prevents runtime config mutation.
 - **Docker required.** The bridge assumes it runs inside a Docker container on a Docker bridge network. It has no standalone mode.

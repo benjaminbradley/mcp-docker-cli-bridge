@@ -2,7 +2,7 @@
 
 > **Status:** Approved
 > **Last updated:** 2026-04-01
-> **References:** [Requirements](REQUIREMENTS.md) · [Architecture](ARCHITECTURE.md) · [ADR 001](adr/001-mcp-transport.md)
+> **References:** [Requirements](REQUIREMENTS.md) · [Architecture](ARCHITECTURE.md) · [ADR 001](adr/001-mcp-transport.md) · [ADR 002](adr/002-pydantic-models.md)
 
 ---
 
@@ -92,7 +92,7 @@ Key behaviors:
 }
 ```
 
-The `text` field contains a JSON-encoded object with `stdout`, `stderr`, and `exit_code`. Non-zero exit codes still produce `isError: false` — the bridge faithfully reports what the subprocess returned.
+The `text` field contains a `CommandResult` model serialized to JSON (see §6.1). Non-zero exit codes still produce `isError: false` — the bridge faithfully reports what the subprocess returned.
 
 **Error result** (bridge-level failure):
 ```json
@@ -164,13 +164,7 @@ A JSON object where each key is a command name and each value is a command defin
 
 ### 2.3 Validation at Startup
 
-The server validates the whitelist on startup and exits with a non-zero exit code if:
-- The file is not valid JSON.
-- The top-level value is not an object.
-- Any command definition is missing a required field.
-- `command` is not a non-empty array of strings.
-- `allow_extra_args` is not a boolean.
-- `cwd` is not a string.
+The whitelist file is parsed and validated using the `CommandEntry` and `CommandsConfig` pydantic models (see §6.1). The server exits with a non-zero exit code if pydantic validation fails — the error message includes field-level detail from pydantic's validation output.
 
 The server logs the number of commands loaded and their names on successful startup.
 
@@ -188,7 +182,7 @@ Rejection is by substring match. If any argument contains a blocked sequence, th
 
 ### 3.2 Type Validation
 
-Each element in the `args` array must be a JSON string. The MCP tool schema declares `"items": {"type": "string"}`, so the SDK may enforce this at the protocol level. The validator provides defense-in-depth for cases where schema validation is bypassed.
+Each element in the `args` array must be a JSON string. The MCP tool schema declares `"items": {"type": "string"}`, so the SDK may enforce this at the protocol level. The `validate_args` function provides defense-in-depth for cases where schema validation is bypassed.
 
 ---
 
@@ -202,7 +196,7 @@ The directory is volume-mounted from the host. The server creates the file on fi
 
 ### 4.2 Log Entry Schema
 
-One JSON object per line, no trailing comma, newline-terminated.
+One JSON object per line, no trailing comma, newline-terminated. Each line is produced by `LogEntry.model_dump_json()` (see §6.1 for the pydantic model definition).
 
 ```json
 {
@@ -242,7 +236,7 @@ The log file is opened in append mode, one line is written, and the file is clos
 
 ## 5. Server Configuration
 
-All configuration is via environment variables with sensible defaults. No config file for the server itself (the whitelist is for commands, not server settings).
+All configuration is via environment variables with sensible defaults, loaded into a `BridgeConfig` pydantic model at startup (see §6.1). No config file for the server itself (the whitelist is for commands, not server settings).
 
 | Variable | Default | Description |
 |---|---|---|
@@ -257,32 +251,90 @@ All configuration is via environment variables with sensible defaults. No config
 
 ## 6. server.py Module Structure
 
-The server is a single file. Internal organization by function:
+The server is a single file. Internal organization:
+
+### 6.1 Pydantic Models
+
+```python
+class CommandEntry(BaseModel):
+    """A single command in the whitelist."""
+    command: list[str]              # Non-empty; first element is executable
+    allow_extra_args: bool
+    cwd: str
+
+    @field_validator("command")
+    @classmethod
+    def command_must_be_nonempty(cls, v):
+        if not v:
+            raise ValueError("command must be a non-empty list")
+        return v
+
+
+class CommandsConfig(RootModel[dict[str, CommandEntry]]):
+    """The entire commands.json file. Keys are command names."""
+    pass
+
+
+class CommandResult(BaseModel):
+    """Subprocess execution result, serialized into MCP tool result text."""
+    stdout: str
+    stderr: str
+    exit_code: int
+
+
+class LogEntry(BaseModel):
+    """Single JSONL log line. Serialized via model_dump_json()."""
+    timestamp: datetime
+    command: str | None
+    args: list[str] | None
+    exit_code: int | None
+    duration_ms: int
+    stdout_bytes: int
+    stderr_bytes: int
+    rejected: bool
+    rejection_reason: str | None = None
+
+
+class BridgeConfig(BaseModel):
+    """Server configuration loaded from environment variables."""
+    port: int = 7357
+    host: str = "0.0.0.0"
+    commands_file: str = "/bridge/commands.json"
+    log_dir: str = "/bridge/logs"
+    log_file: str = "bridge.jsonl"
+    timeout: int = 60
+```
+
+`BridgeConfig` fields are populated from environment variables with the `BRIDGE_` prefix (e.g., `BRIDGE_PORT` → `port`). This is done via a simple factory function that reads `os.environ` with fallbacks to the model defaults — not via pydantic-settings (avoids an additional dependency).
+
+### 6.2 Functions
 
 ```
 server.py
 │
-├── Constants / env var loading
-│   BRIDGE_PORT, BRIDGE_HOST, COMMANDS_FILE, LOG_DIR, LOG_FILE, TIMEOUT
+├── Models (§6.1 above)
 │
-├── load_commands(path) → dict
-│   Read and validate commands.json. Return command lookup dict.
-│   Raise SystemExit on validation failure.
+├── load_config() → BridgeConfig
+│   Read BRIDGE_* env vars, return validated config.
+│
+├── load_commands(path) → CommandsConfig
+│   Read JSON file, validate via CommandsConfig model.
+│   Raise SystemExit with pydantic error detail on failure.
 │
 ├── validate_args(args) → None | str
 │   Check args are strings without metacharacters.
 │   Return None if valid, error message string if invalid.
 │
-├── execute_command(name, args, commands) → dict
+├── execute_command(name, args, commands, timeout) → CommandResult
 │   Look up command, build argv, run subprocess.
-│   Return dict with stdout, stderr, exit_code.
+│   Return CommandResult.
 │   Raise on timeout or exec failure.
 │
-├── log_request(entry, log_dir, log_file)
-│   Append a single JSONL line to the log file.
+├── log_request(entry: LogEntry, log_dir, log_file)
+│   Append entry.model_dump_json() + newline to log file.
 │
 ├── build_tools(commands) → list[Tool]
-│   Generate MCP Tool definitions from command whitelist.
+│   Generate MCP Tool definitions from CommandsConfig.
 │   Commands with allow_extra_args get args in schema;
 │   others get empty schema.
 │
@@ -290,13 +342,16 @@ server.py
 │   One handler registered per tool name. Each handler:
 │   1. Extracts args from tool input (if schema allows)
 │   2. Validates args
-│   3. Calls execute_command
-│   4. Logs the request
-│   5. Returns MCP tool result (content + isError flag)
+│   3. Calls execute_command → CommandResult
+│   4. Constructs LogEntry, calls log_request
+│   5. Returns MCP tool result:
+│      content=result.model_dump_json(), isError=False
+│      or error message string, isError=True
 │
 └── main()
-    Load commands, build tools, create MCP Server instance,
-    configure Streamable HTTP transport, start serving.
+    load_config, load_commands, build_tools,
+    create MCP Server instance, configure Streamable HTTP
+    transport, start serving.
 ```
 
 ---
@@ -309,7 +364,7 @@ server.py
 mcp>=1.1.0
 ```
 
-The `mcp` package pulls in its transitive dependencies (including `anyio`, `httpx`, `starlette`, `uvicorn`, `pydantic`). The bridge code imports only from `mcp` and Python stdlib.
+The `mcp` package pulls in its transitive dependencies including `pydantic`. The bridge code imports directly from both `mcp` and `pydantic` (see ADR 002). No additional packages beyond what the MCP SDK provides.
 
 Pinned versions will be determined during implementation and locked in `requirements.txt`.
 

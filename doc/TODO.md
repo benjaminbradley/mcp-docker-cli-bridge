@@ -2,7 +2,7 @@
 
 > **Status:** Active
 > **Created:** 2026-04-01
-> **References:** [Requirements](REQUIREMENTS.md) · [Architecture](ARCHITECTURE.md) · [Specs](SPECS.md) · [ADR 001](adr/001-mcp-transport.md)
+> **References:** [Requirements](REQUIREMENTS.md) · [Architecture](ARCHITECTURE.md) · [Specs](SPECS.md) · [ADR 001](adr/001-mcp-transport.md) · [ADR 002](adr/002-pydantic-models.md)
 
 Legend:
 
@@ -14,22 +14,22 @@ Legend:
 
 ---
 
-## Phase 0 — MCP Server Skeleton and Config Loader
+## Phase 0 — MCP Server Skeleton, Models, and Config Loader
 
-**Goal:** A running MCP server that loads and validates `commands.json` on startup, registers tools from the whitelist, and responds to `tools/list`. No command execution yet — just startup, config validation, tool registration, and transport.
+**Goal:** A running MCP server that loads and validates `commands.json` on startup via pydantic models, registers tools from the whitelist, and responds to `tools/list`. No command execution yet — just startup, config validation, tool registration, and transport.
 
 ### 0.1 — Create requirements.txt
 - [ ] Create `requirements.txt` at project root with `mcp>=1.1.0`.
-- [ ] **Verify:** `pip install -r requirements.txt` in a clean venv installs the MCP SDK and its transitive dependencies.
+- [ ] **Verify:** `pip install -r requirements.txt` in a clean venv installs the MCP SDK and its transitive dependencies (including pydantic, starlette, uvicorn).
 
-### 0.2 — Create server.py with startup and config loader
-- [ ] Create `server.py` at project root with: env var loading (all six config vars with defaults per SPECS.md §5), `load_commands(path)` function that reads and validates JSON per SPECS.md §2.3.
-- [ ] `load_commands` must exit non-zero with a clear error message for: missing file, invalid JSON, missing required fields, wrong types.
+### 0.2 — Create server.py with pydantic models and config loader
+- [ ] Create `server.py` at project root with: pydantic models (`BridgeConfig`, `CommandEntry`, `CommandsConfig`, `CommandResult`, `LogEntry`) per SPECS.md §6.1; `load_config()` factory reading `BRIDGE_*` env vars; `load_commands(path)` parsing JSON into `CommandsConfig`.
+- [ ] `load_commands` must exit non-zero with pydantic's field-level error detail for: missing file, invalid JSON, missing required fields, wrong types, empty command array.
 - [ ] Startup prints a banner: port, bind address, config file path, number of commands loaded with their names.
-- [ ] **Verify:** Create a test `commands.json` with 2-3 entries (e.g., `echo`, `ls`). Run `python server.py` directly. Confirm banner prints with correct command names and count. Rename config file and confirm server exits with error.
+- [ ] **Verify:** Create a test `commands.json` with 2-3 entries (e.g., `echo`, `ls`). Run `python server.py` directly. Confirm banner prints with correct command names and count. Test invalid configs: remove a required field → pydantic error with field name; set `command` to empty array → custom validator error; malform JSON → clear parse error.
 
 ### 0.3 — Tool registration and tools/list
-- [ ] Implement `build_tools(commands)` per SPECS.md §1.2: generate MCP tool definitions from loaded whitelist. Commands with `allow_extra_args: true` get `args` in schema; others get empty schema. Description is auto-generated from executable prefix.
+- [ ] Implement `build_tools(commands)` per SPECS.md §1.2: generate MCP tool definitions from `CommandsConfig`. Commands with `allow_extra_args: true` get `args` in schema; others get empty schema. Description is auto-generated from executable prefix.
 - [ ] Create MCP Server instance, register tools, configure Streamable HTTP transport on `BRIDGE_HOST:BRIDGE_PORT`.
 - [ ] **Verify:** Start the server. Use the MCP Inspector (`npx @modelcontextprotocol/inspector`) or curl to confirm `tools/list` returns the expected tool definitions matching the test `commands.json`. Confirm tools with `allow_extra_args: false` have no `args` in their schema.
 
@@ -37,19 +37,19 @@ Legend:
 
 ## Phase 1 — Command Execution
 
-**Goal:** Tool calls resolve command names, validate arguments, run subprocesses, and return structured results. All error paths return proper MCP tool errors.
+**Goal:** Tool calls resolve command names, validate arguments, run subprocesses, and return `CommandResult` as structured MCP tool results. All error paths return proper MCP tool errors.
 
 ### 1.1 — Argument validator
 - [ ] Implement `validate_args(args)` per SPECS.md §3: type check (all strings), metacharacter blocklist scan. Returns `None` if valid, error message string if invalid.
 - [ ] **Verify:** Call directly in a Python REPL. `validate_args(["--tb=short"])` → `None`. `validate_args(["--flag; rm -rf /"])` → error string. `validate_args([123])` → error string.
 
 ### 1.2 — Executor
-- [ ] Implement `execute_command(name, args, commands)` per SPECS.md §6: whitelist lookup, `subprocess.run` with `shell=False`, `capture_output=True`, `text=True`, `timeout`, `cwd`. Return dict with `stdout`, `stderr`, `exit_code`.
+- [ ] Implement `execute_command(name, args, commands, timeout)` per SPECS.md §6.2: whitelist lookup, `subprocess.run` with `shell=False`, `capture_output=True`, `text=True`, `timeout`, `cwd`. Return `CommandResult` model.
 - [ ] Raise appropriate exceptions for timeout and file-not-found.
-- [ ] **Verify:** With a test `commands.json` containing an `echo` command (`["echo", "hello"]`, `allow_extra_args: true`), call `execute_command("echo", ["world"], commands)` directly. Confirm return dict contains `stdout: "hello world\n"`, `exit_code: 0`.
+- [ ] **Verify:** With a test `commands.json` containing an `echo` command (`["echo", "hello"]`, `allow_extra_args: true`), call `execute_command("echo", ["world"], commands, 60)` directly. Confirm returned `CommandResult` has `stdout="hello world\n"`, `exit_code=0`.
 
 ### 1.3 — Wire executor into tool handlers
-- [ ] Implement tool handler functions that: extract `args` from tool input (if schema allows), call `validate_args`, call `execute_command`, return MCP tool result per SPECS.md §1.3.
+- [ ] Implement tool handler functions that: extract `args` from tool input (if schema allows), call `validate_args`, call `execute_command`, return MCP tool result per SPECS.md §1.3. Success result text is `CommandResult.model_dump_json()`.
 - [ ] Non-zero subprocess exit codes → `isError: false` (faithful reporting).
 - [ ] Argument validation failure → `isError: true`.
 - [ ] Timeout → `isError: true` with timeout message.
@@ -64,11 +64,11 @@ Legend:
 **Goal:** Every tool invocation (successful or rejected) is logged to a JSONL file with metadata per SPECS.md §4.
 
 ### 2.1 — Implement log_request
-- [ ] Implement `log_request(entry, log_dir, log_file)`: construct log entry dict per SPECS.md §4.2, serialize to JSON, append to file with newline, close file handle. Create log directory if it does not exist.
-- [ ] **Verify:** After a few tool calls via MCP Inspector, inspect the log file. Confirm each line is valid JSON with all expected fields. Confirm rejected requests have `rejected: true` and a reason. Confirm stdout/stderr content is NOT in the log (only byte lengths).
+- [ ] Implement `log_request(entry: LogEntry, log_dir, log_file)`: append `entry.model_dump_json()` + newline to log file. Create log directory if it does not exist.
+- [ ] **Verify:** After a few tool calls via MCP Inspector, inspect the log file. Confirm each line is valid JSON with all expected fields matching `LogEntry` schema. Confirm rejected requests have `rejected: true` and a reason. Confirm stdout/stderr content is NOT in the log (only byte lengths).
 
 ### 2.2 — Integrate logging into tool handlers
-- [ ] Call `log_request` at the end of every tool handler path (both success and error). Capture wall-clock duration using `time.monotonic()` around the execution call.
+- [ ] Construct `LogEntry` at the end of every tool handler path (both success and error). Capture wall-clock duration using `time.monotonic()` around the execution call.
 - [ ] **Verify:** Send a successful tool call and a rejected tool call. Confirm both produce log entries. Confirm `duration_ms` is non-zero for executed commands and zero for rejected requests.
 
 ---
@@ -99,6 +99,6 @@ Legend:
 
 ## Deferred
 
-- **Bridge test suite:** Unit tests for server.py (arg validation, config loading, executor, tool schema generation). Not blocking MVP — the bridge is verified through MCP Inspector testing and through the consumer project's test suite running over it. Tracked for future hardening.
+- **Bridge test suite:** Unit tests for server.py (arg validation, config loading, executor, tool schema generation, pydantic model validation). Not blocking MVP — the bridge is verified through MCP Inspector testing and through the consumer project's test suite running over it. Tracked for future hardening.
 - **Structured stderr logging:** The server could emit structured JSON to stderr for container log aggregation.
 - **Concurrent tool execution:** The MCP SDK supports async, but tool execution is serialized. If concurrent execution becomes needed, the executor could use `asyncio.to_thread`.
