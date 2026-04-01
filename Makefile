@@ -1,4 +1,4 @@
-.PHONY: help build up down logs test lint typecheck format shell
+.PHONY: help build up down logs test lint typecheck format format-check validate shell
 
 ## help: show this help message
 help:
@@ -35,6 +35,13 @@ typecheck:
 ## format: auto-format server.py with ruff
 format:
 	docker compose run --rm --entrypoint "" my-app python -m ruff format server.py
+
+## format-check: check formatting without modifying files
+format-check:
+	docker compose run --rm --entrypoint "" my-app python -m ruff format --check server.py
+
+## validate: run all checks (format-check, lint, typecheck, test)
+validate: format-check lint typecheck test
 
 ## shell: open a shell in the bridge container
 shell:

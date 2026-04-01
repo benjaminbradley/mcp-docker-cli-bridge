@@ -1,4 +1,5 @@
 """MCP Docker CLI Bridge — exposes whitelisted CLI commands as MCP tools."""
+
 import asyncio
 import json
 import os
@@ -143,7 +144,9 @@ def validate_args(args: list) -> str | None:
 # ---------------------------------------------------------------------------
 
 
-def execute_command(name: str, args: list[str], config: CommandsConfig) -> CommandResult:
+def execute_command(
+    name: str, args: list[str], config: CommandsConfig
+) -> CommandResult:
     """Run the whitelisted command and return its result. Raises on timeout or missing executable."""
     entry = config.commands[name]
     argv = entry.command + args
@@ -156,7 +159,9 @@ def execute_command(name: str, args: list[str], config: CommandsConfig) -> Comma
         timeout=timeout,
         cwd=entry.cwd,
     )
-    return CommandResult(stdout=result.stdout, stderr=result.stderr, exit_code=result.returncode)
+    return CommandResult(
+        stdout=result.stdout, stderr=result.stderr, exit_code=result.returncode
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -226,12 +231,14 @@ def _create_tool_handler(name: str, commands: CommandsConfig):
             _lock.release()
 
     if entry.allow_extra_args:
+
         async def handler_with_args(args: list[str] | None = None) -> str:
             return await _run(args or [])
 
         handler_with_args.__name__ = name
         return handler_with_args
     else:
+
         async def handler_no_args() -> str:
             return await _run([])
 
