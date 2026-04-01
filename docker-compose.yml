@@ -1,0 +1,17 @@
+services:
+  my-app:
+    build:
+      context: .
+      target: dev
+    ports:
+      - "127.0.0.1:7357:7357"
+    volumes:
+      - ./commands.dev.json:/bridge/commands.json:ro
+      - ./data/bridge-logs:/bridge/logs
+      - ./server.py:/bridge/server.py
+      - ./tests:/bridge/tests
+    environment:
+      - BRIDGE_PORT=7357
+      - BRIDGE_HOST=0.0.0.0
+      - BRIDGE_COMMANDS_FILE=/bridge/commands.json
+      - BRIDGE_LOG_DIR=/bridge/logs

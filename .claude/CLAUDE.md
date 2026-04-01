@@ -9,6 +9,7 @@
 @../.autocode/core/principles/best-practices.md
 @../.autocode/core/principles/anti-patterns.md
 @../.autocode/core/principles/docker.md
+@../.autocode/core/principles/opinions.md
 @../.autocode/core/collaboration/communication.md
 
 <!-- Language: python -->

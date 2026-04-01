@@ -15,7 +15,7 @@ Practice: Use docker to create isolated environments for development, testing, a
 Logistics: A single docker-compose.yml at the project root, or (when multiple files are needed) within a docker/ subdirectory which will also contain Dockerfile's, scripts, config files, etc for created containers.
 When to use: Any filesystem-based project which requires code execution or additional OS dependencies.
 Principle: Dependency isolation
-Pointers: Use multi-phase docker files to keep DRY and consistent between development, testing, and deployment images. Secrets should always be encrypted at rest.
+Pointers: Use multi-stage docker files to keep DRY and consistent between development, testing, and deployment images. Secrets should always be encrypted at rest.
 
 ## File audience isolation
 

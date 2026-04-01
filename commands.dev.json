@@ -1,0 +1,38 @@
+{
+  "default_timeout": 30,
+  "commands": {
+    "echo_test": {
+      "command": ["echo"],
+      "allow_extra_args": true,
+      "cwd": "/bridge",
+      "timeout": 5
+    },
+    "run_tests": {
+      "command": ["python", "-m", "pytest", "tests/", "-v"],
+      "allow_extra_args": true,
+      "cwd": "/bridge",
+      "timeout": 60
+    },
+    "run_lint": {
+      "command": ["python", "-m", "ruff", "check", "server.py"],
+      "allow_extra_args": false,
+      "cwd": "/bridge"
+    },
+    "run_typecheck": {
+      "command": ["python", "-m", "mypy", "server.py"],
+      "allow_extra_args": false,
+      "cwd": "/bridge"
+    },
+    "run_format_check": {
+      "command": ["python", "-m", "ruff", "format", "--check", "server.py"],
+      "allow_extra_args": false,
+      "cwd": "/bridge"
+    },
+    "sleep_test": {
+      "command": ["sleep"],
+      "allow_extra_args": true,
+      "cwd": "/bridge",
+      "timeout": 10
+    }
+  }
+}
