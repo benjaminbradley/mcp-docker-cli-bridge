@@ -220,18 +220,20 @@ class TestExecuteCommand:
             }
         )
 
-    def test_captures_stdout_and_exit_code(self):
+    @pytest.mark.asyncio
+    async def test_captures_stdout_and_exit_code(self):
         from server import execute_command
 
         config = self._make_config(
             echo=dict(command=["echo", "hello"], allow_extra_args=True, cwd="/tmp")
         )
-        result = execute_command("echo", ["world"], config)
+        result = await execute_command("echo", ["world"], config)
         assert "hello" in result.stdout
         assert "world" in result.stdout
         assert result.exit_code == 0
 
-    def test_captures_stderr(self):
+    @pytest.mark.asyncio
+    async def test_captures_stderr(self):
         from server import execute_command
 
         config = self._make_config(
@@ -241,10 +243,11 @@ class TestExecuteCommand:
                 cwd="/tmp",
             )
         )
-        result = execute_command("stderr_cmd", [], config)
+        result = await execute_command("stderr_cmd", [], config)
         assert "err" in result.stderr
 
-    def test_nonzero_exit_code_returned(self):
+    @pytest.mark.asyncio
+    async def test_nonzero_exit_code_returned(self):
         from server import execute_command
 
         config = self._make_config(
@@ -254,26 +257,28 @@ class TestExecuteCommand:
                 cwd="/tmp",
             )
         )
-        result = execute_command("fail", [], config)
+        result = await execute_command("fail", [], config)
         assert result.exit_code == 1
 
-    def test_timeout_raises(self):
+    @pytest.mark.asyncio
+    async def test_timeout_raises(self):
         from server import execute_command
 
         config = self._make_config(
             slow=dict(command=["sleep", "5"], allow_extra_args=False, cwd="/tmp", timeout=1)
         )
         with pytest.raises(subprocess.TimeoutExpired):
-            execute_command("slow", [], config)
+            await execute_command("slow", [], config)
 
-    def test_missing_executable_raises(self):
+    @pytest.mark.asyncio
+    async def test_missing_executable_raises(self):
         from server import execute_command
 
         config = self._make_config(
             bad=dict(command=["nonexistent_binary_xyz"], allow_extra_args=False, cwd="/tmp")
         )
         with pytest.raises(FileNotFoundError):
-            execute_command("bad", [], config)
+            await execute_command("bad", [], config)
 
 
 class TestToolHandlers:
@@ -380,6 +385,27 @@ class TestToolHandlers:
         finally:
             server._lock.release()
             server._current_command = None
+
+    @pytest.mark.asyncio
+    async def test_concurrent_busy_rejection(self):
+        """Second handler launched while first is running must be rejected immediately."""
+        import server
+
+        server._lock = asyncio.Lock()
+        server._current_command = None
+        config = self._make_config(
+            slow=dict(
+                command=["python", "-c", "import time; time.sleep(0.5)"],
+                allow_extra_args=False,
+                cwd="/tmp",
+            )
+        )
+        handler = server._create_tool_handler("slow", config, "/tmp", "bridge-test.jsonl")
+        task1 = asyncio.create_task(handler())
+        await asyncio.sleep(0.1)  # let task1 acquire lock and enter subprocess
+        with pytest.raises(Exception, match="busy"):
+            await handler()
+        await task1
 
 
 class TestLogRequest:

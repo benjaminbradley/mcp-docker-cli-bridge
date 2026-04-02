@@ -146,14 +146,15 @@ def validate_args(args: list) -> str | None:
 # ---------------------------------------------------------------------------
 
 
-def execute_command(
+async def execute_command(
     name: str, args: list[str], config: CommandsConfig
 ) -> CommandResult:
-    """Run the whitelisted command and return its result. Raises on timeout or missing executable."""
+    """Run the whitelisted command in a thread pool and return its result. Raises on timeout or missing executable."""
     entry = config.commands[name]
     argv = entry.command + args
     timeout = config.effective_timeout(name)
-    result = subprocess.run(
+    result = await asyncio.to_thread(
+        subprocess.run,
         argv,
         shell=False,
         capture_output=True,
@@ -267,7 +268,7 @@ def _create_tool_handler(
                 raise Exception(err)
             t0 = time.monotonic()
             try:
-                result = execute_command(name, args, commands)
+                result = await execute_command(name, args, commands)
                 duration_ms = int((time.monotonic() - t0) * 1000)
                 log_request(
                     LogEntry(
