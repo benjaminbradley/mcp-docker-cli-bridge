@@ -3,6 +3,7 @@
   "permissions": {
     "allow": [
       "Edit",
+      "mcp__bridge-dev__*",
       "Bash(find *)",
       "Bash(grep :*)",
       "Bash(head :*)",

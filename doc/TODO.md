@@ -143,7 +143,7 @@ Legend:
 - [x] **RED:** `TestLogRequest` (4 tests) written and confirmed failing.
 - [x] **GREEN:** `log_request()` using `Path.mkdir(parents=True, exist_ok=True)` + open/close per write. 43/43 passing.
 - [-] **REFACTOR:** N/A — already clean.
-- [ ] **Verify:** After a few tool calls via MCP Inspector, inspect the log file. Confirm each line is valid JSON with all expected fields. Confirm rejected requests have `rejected: true`, a reason, and null stdout/stderr.
+- [x] **Verify:** Inspected `data/bridge-logs/bridge.jsonl` via jq. All entries are valid JSON with all expected fields. Validation rejection has `rejected: true`, `rejection_reason` set, `exit_code: null`, `duration_ms: 0`, `stdout_bytes: 0`.
 - **Files:** `server.py`, `tests/test_server.py`, `tests/conftest.py`, `tests/server.py`
 
 ### 2.2 — Integrate logging into tool handlers
@@ -151,7 +151,7 @@ Legend:
 - [x] **RED:** `TestLogIntegration` (5 tests) written and confirmed failing.
 - [x] **GREEN:** `_create_tool_handler` now accepts `log_dir`/`log_file`; logs all paths (success, validation rejection, busy rejection) using `LogEntry` + `time.monotonic()` for duration. 43/43 passing.
 - [-] **REFACTOR:** N/A — handler is clean; all paths covered.
-- [ ] **Verify:** Send a successful tool call, a rejected tool call (bad args), and a busy rejection (concurrent call). Confirm all three produce log entries with correct `rejected` and `rejection_reason` values. Confirm `duration_ms` is non-zero for executed commands and zero for rejected/busy requests.
+- [x] **Verify:** Successful calls log correctly (`rejected: false`, non-zero `duration_ms`, correct byte counts). Validation rejection logs correctly (`rejected: true`, `rejection_reason` with disallowed chars, `duration_ms: 0`). Busy rejection: unit-tested only — `subprocess.run` blocks the asyncio event loop so concurrent HTTP requests are serialized; the lock is always free by the time a second request is processed. Deferred to improvements: use `asyncio.to_thread` to make busy rejection triggerable via real HTTP.
 - **Files:** `server.py`, `tests/test_server.py`, `tests/server.py`
 
 ---
@@ -184,3 +184,4 @@ Legend:
 
 - **Configurable payload logging:** Add `BRIDGE_LOG_PAYLOADS` env var (default: true) to allow disabling stdout/stderr content in logs for high-throughput environments.
 - **Structured stderr logging:** The server could emit structured JSON to stderr for container log aggregation.
+- **`asyncio.to_thread` for subprocess:** `subprocess.run` blocks the asyncio event loop, making busy rejection untriggerable via real HTTP. Wrapping execution in `asyncio.to_thread` would fix this and also improve responsiveness under load.
