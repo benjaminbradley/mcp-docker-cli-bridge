@@ -15,7 +15,7 @@ Recurrence thresholds: Count 2 → Medium priority. Count 3+ → High priority (
 
 | Date | Description | Domain | Recurrence | Priority | Status |
 |------|-------------|--------|------------|----------|--------|
-| | | | | | |
+| 2026-04-01 | Background agents (e.g. explore agent) can return stale or incorrect file state if the file was recently modified. Agent reads the file as it was before the edit landed. Symptoms: agent reports function missing when it was just added. Workaround: read the file directly (Read tool) instead of delegating to an agent for verification after edits. | Agents / tooling | 1 | Low | Open |
 
 **Status values:** Open · In Progress · Resolved (link to commit) · Discarded (reason)
 
@@ -37,4 +37,6 @@ Record of in-place edits made to `.autocode/` source files and reported to the u
 
 | Date | File Changed | Change Description | User Notified | Commit |
 |------|--------------|--------------------|---------------|--------|
-| | | | | |
+| 2026-04-01 | `.autocode/core/principles/docker.md` | Added "Source File Bind Mounts — Use Directory Mounts, Not File Mounts" section | Pending | 77c84dc (pre-edit) |
+| 2026-04-01 | `.autocode/core/workflow/tdd.md` | Added "Pre-Commit Hooks and the RED Phase" section | Pending | 77c84dc (pre-edit) |
+| 2026-04-01 | `.autocode/lang/python/testing.md` | Added "Timing-Sensitive Tests" section (use python -c "pass" not shell builtins for duration assertions) | Pending | — |

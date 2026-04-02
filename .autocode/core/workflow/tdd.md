@@ -58,6 +58,22 @@ feat(scope): implement [behavior]
 refactor(scope): extract [what] for clarity
 ```
 
+## Pre-Commit Hooks and the RED Phase
+
+**If the project has a pre-commit hook that runs the test suite, you cannot commit failing tests.** This is a fundamental conflict with the "commit the test first" TDD ideal.
+
+**Resolution:** When a test-running pre-commit hook is present, batch the RED and GREEN commits — write the failing test, implement just enough to pass it, then commit test + implementation together:
+
+```
+test(scope): add test for [behavior]     ← written first, not committed yet
+feat(scope): implement [behavior]         ← written second
+# Both committed together as one or two commits after GREEN
+```
+
+This preserves the RED → GREEN discipline in code order, while respecting the constraint that committed tests must pass.
+
+**Do not skip pre-commit hooks (`--no-verify`)** to force-commit failing tests. The hook is protecting the shared history. Accept the batching compromise instead.
+
 ## When Tests Are Hard to Write
 
 If a test is hard to write, it usually means:

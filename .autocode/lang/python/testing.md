@@ -237,6 +237,28 @@ exclude_lines = [
 
 3. **REFACTOR**: Clean up with tests green
 
+## Timing-Sensitive Tests
+
+Shell builtins (`echo`, `ls`, `true`) complete in under 1ms. Asserting `duration_ms > 0` against them is flaky because `int(duration * 1000)` rounds to 0.
+
+**Use `python -c "pass"` (or any Python one-liner) instead** — Python interpreter startup guarantees measurable elapsed time (~5–50ms):
+
+```python
+# BAD — echo completes in <1ms, int(duration_ms) == 0 → flaky
+commands_config = make_config("echo", ["echo", "hi"])
+handler = _create_tool_handler("echo", commands_config, ...)
+await handler()
+assert log_entry["duration_ms"] > 0  # fails intermittently
+
+# GOOD — Python startup guarantees >1ms
+commands_config = make_config("py", ["python", "-c", "pass"])
+handler = _create_tool_handler("py", commands_config, ...)
+await handler()
+assert log_entry["duration_ms"] > 0  # always passes
+```
+
+The same applies to any subprocess-timing assertion: use commands that include interpreter or linker startup rather than shell builtins.
+
 ## Filesystem / Permission Tests
 
 Use `chmod 0o444` to simulate a non-writable path. Always restore permissions in a `finally` block so pytest `tmp_path` teardown succeeds:

@@ -59,3 +59,13 @@
 ## Phase 2 Summary
 
 All tasks complete. 43/43 tests passing. Docker file bind mount issue discovered and worked around (see task 2.1 learnings). docker-compose.yml updated for proper fix — requires `make down && make up` to take effect. After restart, tests/conftest.py can be simplified (PYTHONPATH=/workspace makes tests/server.py copy unnecessary).
+
+## Deep Reflection — Pre-Compact (2026-04-01)
+
+**Signals found:**
+1. Docker file bind mount → inode stale after atomic edit. **Applied in-place** → `docker.md` (new section)
+2. Pre-commit hook blocks RED-phase test commits. **Applied in-place** → `tdd.md` (new section)
+3. `echo` too fast for `duration_ms > 0` assertion; `python -c "pass"` is the fix. **Applied in-place** → `testing.md` (new "Timing-Sensitive Tests" section)
+4. Background agents return stale file state post-edit. **Deferred** → `doc/LESSONS.md`
+
+**What I'd tell past-self:** Start with `docker compose config` and check volume types before any test-failing/import-error debugging. File bind mounts are a footgun when editors use atomic writes. Verify volume type first, save 30 minutes.

@@ -52,6 +52,32 @@ If a test must work around a permission check (e.g., using a file path where a d
 
 `chmod`-based permission tests are correct and idiomatic when the container runs as a non-root user. They are the expected pattern.
 
+## Source File Bind Mounts — Use Directory Mounts, Not File Mounts
+
+**File bind mounts go stale when the host editor atomically replaces a file.**
+
+Many editors and tools (including Claude Code's Edit tool) write changes atomically: write to a temp file, then rename it over the original. This creates a **new inode**. Docker file bind mounts are inode-based — the container continues to see the original inode and never receives the new content.
+
+**Symptom:** Linters (ruff, mypy) pass because they read from the filesystem path directly. But Python's import system loads from a stale `.pyc` or the stale inode file — `pytest` fails with `ImportError` or `IndentationError` on code that was just edited.
+
+**Rule:** Never use file bind mounts for source files that will be edited during development:
+
+```yaml
+# BAD — file bind mount goes stale after atomic edits
+volumes:
+  - ./server.py:/app/server.py
+
+# GOOD — directory bind mount always reflects current content
+volumes:
+  - .:/workspace
+environment:
+  - PYTHONPATH=/workspace
+```
+
+For Python projects, set `PYTHONPATH` to the directory-mounted workspace path so `pytest` finds the fresh source before any in-container copy.
+
+If a file bind mount is unavoidable (e.g. read-only config), this is less of a concern since the file is not being edited during the container's lifetime.
+
 ## Dockerfile Layer Order
 
 Maximize cache reuse and minimize rebuild time:
