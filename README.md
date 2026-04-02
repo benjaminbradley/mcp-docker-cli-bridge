@@ -108,21 +108,20 @@ Each command defines:
 
 ### 3. Add the bridge to your Dockerfile
 
-Add a `dev` stage that extends your production image:
+Add a `dev` stage that extends your production image. The bridge files are fetched from the named build context `bridge` (provided by the compose overlay in step 4) using `COPY --from=bridge` — not a subdirectory path:
 
 ```dockerfile
 FROM base AS dev
-# Copy bridge server and install its dependencies
-COPY bridge/server.py /bridge/server.py
-COPY bridge/requirements.txt /bridge/requirements.txt
+# COPY --from=<context-name> pulls from the named context defined in
+# docker-compose.dev.yml's additional_contexts, not from a local subdirectory.
+COPY --from=bridge server.py /bridge/server.py
+COPY --from=bridge requirements.txt /bridge/requirements.txt
 RUN pip install --no-cache-dir -r /bridge/requirements.txt \
     && mkdir -p /bridge/logs \
     && chown -R appuser:appuser /bridge
 # Override app entrypoint — this container runs the bridge, not the app
 ENTRYPOINT ["python", "/bridge/server.py"]
 ```
-
-The `bridge/` files are provided to the Docker build via the `additional_contexts` directive in the compose overlay (step 4) — no changes to your main build context are needed.
 
 ### 4. Create a dev compose override
 
@@ -135,6 +134,11 @@ services:
       target: dev
       additional_contexts:
         bridge: ../mcp-docker-cli-bridge
+    # Explicitly set entrypoint here as well as in the Dockerfile.
+    # Compose file entrypoint values take precedence over Dockerfile ENTRYPOINT
+    # instructions, so if your base docker-compose.yml sets entrypoint: for this
+    # service, the Dockerfile's ENTRYPOINT will be silently ignored without this.
+    entrypoint: ["python", "/bridge/server.py"]
     volumes:
       - ./commands.json:/bridge/commands.json:ro
       - ./data/bridge-logs:/bridge/logs
@@ -149,6 +153,8 @@ networks:
     external: true
     name: ${BRIDGE_NETWORK:-my-app-dev-bridge-net}
 ```
+
+`additional_contexts: bridge: ../mcp-docker-cli-bridge` registers the bridge project directory as a named build context. This is what makes `COPY --from=bridge` resolve correctly in the Dockerfile.
 
 ### 5. Start the dev environment
 
@@ -392,7 +398,7 @@ The `172.16.0.0/12` range (`172.16.0.0` – `172.31.255.255`) is standard for Do
 
 **4. Assign subnets systematically if you run multiple simultaneous projects:**
 
-Each project that uses the bridge needs its own /29. A simple scheme — increment the third octet by 1 per project within a reserved /24:
+Each project that uses the bridge needs its own /29. A simple scheme — increment by 8 per project within a reserved /24:
 
 | Project | Network name | Subnet |
 |---|---|---|
