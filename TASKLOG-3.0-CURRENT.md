@@ -19,6 +19,10 @@
 - **Files:** `tests/test_server.py`, `server.py`, `tests/server.py`
 
 ### TDD Cycle
-- RED: ⏳
-- GREEN: ⏳
-- REFACTOR: ⏳
+- RED: ✅ 6 tests failing (TypeError: can't await CommandResult / concurrent test missing)
+- GREEN: ✅ 44/44 passing
+- REFACTOR: N/A — change is minimal and clean
+
+### Outcome
+**Completed:** 2026-04-02
+**Commits:** ae5f52d (feat: asyncio.to_thread)
