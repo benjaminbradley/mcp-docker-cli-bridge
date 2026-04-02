@@ -1,15 +1,36 @@
 # MCP Docker CLI Bridge
 
-An MCP (Model Context Protocol) server that gives AI development agents secure, controlled access to CLI commands inside a Docker container. Built for workflows where Claude Code needs to run tests, linters, and dev tools inside an application container without Docker socket access.
+An MCP (Model Context Protocol) server that gives AI development agents secure, controlled access to CLI commands inside a Docker container.
+
+## When Is This Useful?
+
+This project is designed for a specific development topology:
+
+- **Claude Code** runs inside a [VS Code Dev Container](https://marketplace.visualstudio.com/items?itemName=ms-vscode-remote.remote-containers) — an isolated Docker container with a restricted network egress firewall and no Docker socket access.
+- **Your application** runs in a separate Docker container, managed by `docker compose`.
+- **Claude Code needs to run commands inside the app container** — tests, linters, type checkers — but cannot use `docker exec` (no socket) and should not be given unrestricted shell access.
+
+The bridge solves this by running a small MCP HTTP server inside the app container. Claude Code calls it like any other MCP tool, and the bridge executes only the specific commands you whitelist.
+
+```
+┌──────────────────────────────┐     ┌──────────────────────────────┐
+│  VS Code Dev Container       │     │  App Container               │
+│                              │     │                              │
+│  Claude Code                 │     │  Your application            │
+│      │                       │     │                              │
+│      │  MCP over HTTP        │     │  MCP CLI Bridge (port 7357)  │
+│      └──────────────────────▶│─────▶      │                      │
+│                              │     │      ▼                       │
+│  (no Docker socket access)   │     │  pytest, ruff, mypy, ...     │
+└──────────────────────────────┘     └──────────────────────────────┘
+                    shared Docker bridge network
+```
+
+Both containers communicate over a dedicated Docker bridge network. Claude Code never touches the Docker daemon, and the app container never exposes anything beyond the whitelisted commands.
 
 ## How It Works
 
 The bridge runs inside your application's Docker container during development. It reads a `commands.json` whitelist that you define, and exposes each command as an MCP tool over Streamable HTTP. Claude Code discovers the tools automatically and calls them like any other MCP tool.
-
-```
-Claude Code ──(MCP over HTTP)──▶ Bridge Server ──(subprocess)──▶ pytest, ruff, mypy, etc.
-                                  inside your app container
-```
 
 ## Key Properties
 
@@ -27,15 +48,19 @@ Replace all `my-*` placeholders with names specific to your project.
 | `my-app` | Docker Compose service name | `findworkbot`, `api`, `backend` |
 | `my-app-dev-bridge-net` | Docker bridge network name | `fwb-dev-bridge-net`, `api-dev-bridge-net` |
 | `my-app-bridge` | MCP server registration name | `fwb-bridge`, `api-bridge` |
-| `172.my.subnet.0/24` | Fixed subnet for the bridge network | `172.22.0.0/24` |
+| `W.X.Y.0/29` | Fixed /29 subnet for the bridge network | `172.22.0.0/29` |
+
+See [Choosing a Subnet](#choosing-a-subnet) for how to pick `W.X.Y.0` safely.
 
 ### 1. Create the bridge network
 
-Use a fixed subnet so your Claude Code devcontainer's firewall can allow it (see step 7):
+Use a fixed /29 subnet so your Claude Code devcontainer's firewall can allow it precisely (see step 7):
 
 ```bash
-docker network create --subnet=172.my.subnet.0/24 my-app-dev-bridge-net
+docker network create --subnet=W.X.Y.0/29 my-app-dev-bridge-net
 ```
+
+A /29 gives 8 addresses: the network address, the broadcast address, one gateway address (reserved by Docker for the host bridge interface), and five usable container slots — more than enough for any dev setup.
 
 ### 2. Define your command whitelist
 
@@ -160,27 +185,40 @@ claude mcp add --transport http my-app-bridge http://my-app:7357/mcp --scope loc
 
 Claude Code now discovers `run_tests`, `run_lint`, `run_typecheck`, `run_format_check`, and `run_format_fix` as tools and can call them autonomously.
 
-### 7. Allow the bridge subnet in your Claude Code devcontainer firewall
+### 7. Configure your Claude Code devcontainer firewall
 
-Claude Code devcontainers typically run a network egress firewall. The devcontainer must allow the bridge network's subnet so that Claude Code can reach the bridge server.
+Claude Code devcontainers typically run a network egress firewall. Add a block to your project's `.devcontainer/init-firewall.sh` that:
 
-Add this block to your project's `.devcontainer/init-firewall.sh`, **before** the `iptables -P INPUT DROP` line:
+1. **Blocks the Docker bridge gateway** — Docker reserves the first address in the subnet (e.g. `W.X.Y.1`) for the host machine's bridge interface. Blocking it prevents the devcontainer from reaching host services through this path.
+2. **Allows only the MCP port** on the remaining subnet addresses — containers on the bridge network can only be reached on port 7357 (or whatever `BRIDGE_PORT` you set).
+
+Add this block **before** the `iptables -P INPUT DROP` line:
 
 ```bash
-# Allow traffic to/from the bridge network (MCP server at my-app:7357)
-BRIDGE_SUBNET="172.my.subnet.0/24"
-echo "Allowing bridge subnet: $BRIDGE_SUBNET"
-iptables -A INPUT -s "$BRIDGE_SUBNET" -j ACCEPT
-iptables -A OUTPUT -d "$BRIDGE_SUBNET" -j ACCEPT
+# ── MCP bridge: my-app-dev-bridge-net ────────────────────────────────────────
+BRIDGE_SUBNET="W.X.Y.0/29"
+BRIDGE_GATEWAY="W.X.Y.1"   # Docker reserves .1 for the host bridge interface
+BRIDGE_PORT="7357"           # Change if you've set a custom BRIDGE_PORT
+echo "Configuring MCP bridge rules (subnet: $BRIDGE_SUBNET, port: $BRIDGE_PORT)"
+
+# Block the gateway — prevents devcontainer from reaching host services
+iptables -A OUTPUT -d "$BRIDGE_GATEWAY" -j REJECT --reject-with icmp-host-prohibited
+iptables -A INPUT  -s "$BRIDGE_GATEWAY" -j REJECT --reject-with icmp-host-prohibited
+
+# Allow the MCP port to/from containers on the subnet only
+# Return traffic (responses from the app) is handled by the ESTABLISHED,RELATED rule below
+iptables -A OUTPUT -d "$BRIDGE_SUBNET" -p tcp --dport "$BRIDGE_PORT" -j ACCEPT
+# ─────────────────────────────────────────────────────────────────────────────
 ```
 
-The subnet must match the one used in step 1. Use a different subnet per project to avoid conflicts between simultaneously running bridge networks.
+The subnet and port values must match step 1 and your `BRIDGE_PORT` environment variable (default: `7357`).
 
-After updating the firewall script, **rebuild the devcontainer** (VS Code: `Dev Containers: Rebuild Container`) to apply the change. Until then, you can apply it manually in the current session:
+After updating the firewall script, **rebuild the devcontainer** (VS Code: `Dev Containers: Rebuild Container`) to apply the change. Until then, you can apply the rules manually in the current session:
 
 ```bash
-sudo iptables -A INPUT -s 172.my.subnet.0/24 -j ACCEPT
-sudo iptables -A OUTPUT -d 172.my.subnet.0/24 -j ACCEPT
+sudo iptables -A OUTPUT -d W.X.Y.1 -j REJECT --reject-with icmp-host-prohibited
+sudo iptables -A INPUT  -s W.X.Y.1 -j REJECT --reject-with icmp-host-prohibited
+sudo iptables -A OUTPUT -d W.X.Y.0/29 -p tcp --dport 7357 -j ACCEPT
 ```
 
 ### 8. Connect the devcontainer to the bridge network
@@ -278,9 +316,111 @@ To remove the bridge from a project, delete these files — no application sourc
 4. The `dev` stage from your Dockerfile
 5. Bridge references from `doc/DEVELOPMENT.md`
 6. `data/bridge-logs/` (optional, log data)
-7. The bridge subnet rule from `.devcontainer/init-firewall.sh`
+7. The bridge subnet block from `.devcontainer/init-firewall.sh`
 
 Your Makefile targets revert to `docker compose run --rm` behavior automatically.
+
+## Security
+
+### What this setup enforces
+
+- **No Docker socket access.** Claude Code cannot call `docker exec`, inspect containers, or affect anything outside the whitelisted commands. It has no path to the Docker daemon.
+- **Named command whitelist.** Only commands declared in `commands.json` are callable. The set is fixed at server startup; there is no way to add commands at runtime.
+- **Shell bypass prevented.** All commands run via `subprocess.run(shell=False)`. The executable and its fixed arguments are never passed through a shell interpreter.
+- **Metacharacter blocklist.** Caller-supplied arguments are checked against a blocklist (`;`, `&&`, `|`, `$(`, `>`, `<`, etc.) before execution. Arguments containing any blocked sequence are rejected and logged.
+- **Argument schema enforcement.** Commands with `allow_extra_args: false` expose no `args` parameter in the MCP tool schema — the MCP SDK rejects any call that tries to supply one.
+- **Read-only whitelist.** `commands.json` is volume-mounted `:ro` — the bridge process cannot modify it.
+- **Concurrency lock.** Only one command runs at a time. Concurrent calls receive an immediate error naming the in-progress command, preventing queue-based abuse.
+- **Audit log.** Every invocation (including rejections) is logged with full arguments, exit code, stdout, stderr, and timing. Log entries are append-only from the server's perspective.
+- **Non-root execution.** The bridge server runs as a non-root user inside the container.
+- **Firewall port restriction.** With the recommended `init-firewall.sh` configuration, the devcontainer can only reach the bridge subnet on the single MCP port, and cannot reach the host machine via the Docker bridge gateway.
+
+### Remaining gaps and limitations
+
+- **No authentication on the MCP endpoint.** The bridge listens on plain HTTP with no token or credential requirement. Any container that can reach the bridge subnet on port 7357 can call any whitelisted tool. The firewall rules mitigate this by limiting which containers can reach the port, but there is no per-caller identity.
+- **No TLS.** Traffic between Claude Code and the bridge is unencrypted. This is acceptable on a local Docker bridge network (traffic does not leave the host) but means the bridge should never be exposed on a routable network interface.
+- **`allow_extra_args: true` commands accept argument-shaped input.** Shell injection is blocked, but a caller can still influence command behavior by crafting argv values (e.g., passing a different test path to pytest). Only whitelist commands with `allow_extra_args: true` where argument variance is intentional.
+- **Subprocess resource usage is uncapped.** Timeouts prevent indefinite hangs, but a whitelisted command can consume significant CPU or memory during its allowed window. This is inherent to any test-runner integration.
+- **Audit log is not tamper-proof.** The JSONL file is append-only from the server's perspective, but it is a plain file on a volume mount — a process with filesystem access can modify it.
+- **Shared container filesystem.** The bridge runs in the same container as your application and has access to the same filesystem. It is not a sandbox; it can read application source, config, and data files. This is by design (it needs to run tools against your code), but it means the bridge's attack surface is the container's full filesystem, not just the whitelisted commands.
+
+## Choosing a Subnet
+
+Each bridge network needs a dedicated subnet so the devcontainer firewall can allow exactly that network's traffic. This section explains how to pick one that won't conflict with your existing setup or other simultaneously running projects.
+
+### Why a fixed subnet is required
+
+Docker can assign subnets automatically, but the devcontainer firewall script runs at container startup — before the bridge network necessarily exists. A fixed subnet lets you write a firewall rule that will be valid regardless of startup order.
+
+### Subnet size: use /29
+
+A /29 gives 8 addresses:
+
+| Address | Role |
+|---|---|
+| `W.X.Y.0` | Network address (unusable) |
+| `W.X.Y.1` | Docker bridge gateway — host machine's bridge interface |
+| `W.X.Y.2` – `W.X.Y.6` | Available for containers (5 slots) |
+| `W.X.Y.7` | Broadcast address (unusable) |
+
+Five container slots is sufficient for any realistic dev environment running the bridge. If you somehow need more, use a /28 (14 usable addresses).
+
+### Picking a safe base address
+
+Work through this checklist:
+
+**1. Check what Docker networks already exist on your machine:**
+
+```bash
+docker network ls -q | xargs docker network inspect \
+  --format '{{.Name}}: {{range .IPAM.Config}}{{.Subnet}}{{end}}'
+```
+
+Note all the subnets in use. Your new /29 must not overlap any of them.
+
+**2. Check your host's routing table for VPN or physical network ranges:**
+
+```bash
+ip route
+```
+
+Corporate VPNs frequently claim large blocks of `10.0.0.0/8` or `172.16.0.0/12`. If your VPN owns `172.20.0.0/14`, for example, you need to stay outside that range entirely.
+
+**3. Pick from a low-traffic zone of the private address space:**
+
+The `172.16.0.0/12` range (`172.16.0.0` – `172.31.255.255`) is standard for Docker but also commonly grabbed by VPNs. If you're on a VPN that owns a wide block here, prefer `10.255.0.0/8` (the far end of the 10/8 space, least commonly assigned by VPNs and routers) or `192.168.200.0/24` and above.
+
+**4. Assign subnets systematically if you run multiple simultaneous projects:**
+
+Each project that uses the bridge needs its own /29. A simple scheme — increment the third octet by 1 per project within a reserved /24:
+
+| Project | Network name | Subnet |
+|---|---|---|
+| find-work-bot | `fwb-dev-bridge-net` | `172.22.0.0/29` |
+| my-api | `api-dev-bridge-net` | `172.22.0.8/29` |
+| my-frontend | `fe-dev-bridge-net` | `172.22.0.16/29` |
+| … | … | … |
+
+Choosing a single /24 base (here `172.22.0.0/24`) for all your bridge networks means one block to check for conflicts, and the increments are easy to track.
+
+**5. Document your allocation.**
+
+Add a comment to each project's `.devcontainer/init-firewall.sh` naming the subnet and its source, so future you knows why `172.22.0.0/29` was chosen and doesn't accidentally reuse it.
+
+### Creating the network with the chosen subnet
+
+```bash
+docker network create --subnet=W.X.Y.0/29 my-app-dev-bridge-net
+```
+
+Verify it was created correctly:
+
+```bash
+docker network inspect my-app-dev-bridge-net \
+  --format '{{range .IPAM.Config}}Subnet: {{.Subnet}}, Gateway: {{.Gateway}}{{end}}'
+```
+
+The gateway shown will be `W.X.Y.1` — this is the address to block in the firewall script (step 7 of Quick Start).
 
 ## Documentation
 
