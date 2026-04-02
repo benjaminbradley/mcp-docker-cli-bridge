@@ -20,10 +20,21 @@ Claude Code ──(MCP over HTTP)──▶ Bridge Server ──(subprocess)─�
 
 ## Quick Start
 
+Replace all `my-*` placeholders with names specific to your project.
+
+| Placeholder | Meaning | Example |
+|---|---|---|
+| `my-app` | Docker Compose service name | `findworkbot`, `api`, `backend` |
+| `my-app-dev-bridge-net` | Docker bridge network name | `fwb-dev-bridge-net`, `api-dev-bridge-net` |
+| `my-app-bridge` | MCP server registration name | `fwb-bridge`, `api-bridge` |
+| `172.my.subnet.0/24` | Fixed subnet for the bridge network | `172.22.0.0/24` |
+
 ### 1. Create the bridge network
 
+Use a fixed subnet so your Claude Code devcontainer's firewall can allow it (see step 7):
+
 ```bash
-docker network create dev-bridge
+docker network create --subnet=172.my.subnet.0/24 my-app-dev-bridge-net
 ```
 
 ### 2. Define your command whitelist
@@ -49,6 +60,16 @@ Create `commands.json` in your project root:
       "command": ["python", "-m", "mypy", "src/"],
       "allow_extra_args": false,
       "cwd": "/app"
+    },
+    "run_format_check": {
+      "command": ["python", "-m", "ruff", "format", "--check", "src/"],
+      "allow_extra_args": false,
+      "cwd": "/app"
+    },
+    "run_format_fix": {
+      "command": ["python", "-m", "ruff", "format", "src/"],
+      "allow_extra_args": false,
+      "cwd": "/app"
     }
   }
 }
@@ -66,12 +87,17 @@ Add a `dev` stage that extends your production image:
 
 ```dockerfile
 FROM base AS dev
-RUN pip install -e ".[dev]"
+# Copy bridge server and install its dependencies
 COPY bridge/server.py /bridge/server.py
 COPY bridge/requirements.txt /bridge/requirements.txt
-RUN pip install --no-cache-dir -r /bridge/requirements.txt
-CMD ["python", "/bridge/server.py"]
+RUN pip install --no-cache-dir -r /bridge/requirements.txt \
+    && mkdir -p /bridge/logs \
+    && chown -R appuser:appuser /bridge
+# Override app entrypoint — this container runs the bridge, not the app
+ENTRYPOINT ["python", "/bridge/server.py"]
 ```
+
+The `bridge/` files are provided to the Docker build via the `additional_contexts` directive in the compose overlay (step 4) — no changes to your main build context are needed.
 
 ### 4. Create a dev compose override
 
@@ -79,25 +105,24 @@ CMD ["python", "/bridge/server.py"]
 
 ```yaml
 services:
-  app:
+  my-app:
     build:
       target: dev
       additional_contexts:
         bridge: ../mcp-docker-cli-bridge
     volumes:
-      - ./src:/app/src
       - ./commands.json:/bridge/commands.json:ro
       - ./data/bridge-logs:/bridge/logs
     networks:
       - default
-      - dev-bridge
+      - my-app-dev-bridge-net
     expose:
       - "7357"
 
 networks:
-  dev-bridge:
+  my-app-dev-bridge-net:
     external: true
-    name: ${BRIDGE_NETWORK:-dev-bridge}
+    name: ${BRIDGE_NETWORK:-my-app-dev-bridge-net}
 ```
 
 ### 5. Start the dev environment
@@ -110,7 +135,7 @@ The bridge server starts and logs the loaded commands:
 
 ```
 Bridge listening on 0.0.0.0:7357
-Loaded 3 commands: run_tests (timeout: 120s), run_lint (timeout: 60s), run_typecheck (timeout: 60s)
+Loaded 5 commands: run_tests (timeout: 120s), run_lint (timeout: 60s), run_typecheck (timeout: 60s), run_format_check (timeout: 60s), run_format_fix (timeout: 60s)
 ```
 
 ### 6. Register with Claude Code
@@ -120,9 +145,9 @@ Add `.mcp.json` to your project root:
 ```json
 {
   "mcpServers": {
-    "dev-bridge": {
+    "my-app-bridge": {
       "type": "http",
-      "url": "http://app:7357/mcp"
+      "url": "http://my-app:7357/mcp"
     }
   }
 }
@@ -130,10 +155,54 @@ Add `.mcp.json` to your project root:
 
 Or register via CLI:
 ```bash
-claude mcp add --transport http dev-bridge http://app:7357/mcp --scope local
+claude mcp add --transport http my-app-bridge http://my-app:7357/mcp --scope local
 ```
 
-Claude Code now discovers `run_tests`, `run_lint`, and `run_typecheck` as tools and can call them autonomously.
+Claude Code now discovers `run_tests`, `run_lint`, `run_typecheck`, `run_format_check`, and `run_format_fix` as tools and can call them autonomously.
+
+### 7. Allow the bridge subnet in your Claude Code devcontainer firewall
+
+Claude Code devcontainers typically run a network egress firewall. The devcontainer must allow the bridge network's subnet so that Claude Code can reach the bridge server.
+
+Add this block to your project's `.devcontainer/init-firewall.sh`, **before** the `iptables -P INPUT DROP` line:
+
+```bash
+# Allow traffic to/from the bridge network (MCP server at my-app:7357)
+BRIDGE_SUBNET="172.my.subnet.0/24"
+echo "Allowing bridge subnet: $BRIDGE_SUBNET"
+iptables -A INPUT -s "$BRIDGE_SUBNET" -j ACCEPT
+iptables -A OUTPUT -d "$BRIDGE_SUBNET" -j ACCEPT
+```
+
+The subnet must match the one used in step 1. Use a different subnet per project to avoid conflicts between simultaneously running bridge networks.
+
+After updating the firewall script, **rebuild the devcontainer** (VS Code: `Dev Containers: Rebuild Container`) to apply the change. Until then, you can apply it manually in the current session:
+
+```bash
+sudo iptables -A INPUT -s 172.my.subnet.0/24 -j ACCEPT
+sudo iptables -A OUTPUT -d 172.my.subnet.0/24 -j ACCEPT
+```
+
+### 8. Connect the devcontainer to the bridge network
+
+After each devcontainer rebuild, connect it to the bridge network from the host so that `my-app` resolves correctly inside the devcontainer:
+
+```bash
+# Find the devcontainer name
+docker ps --format '{{.Names}}'
+
+docker network connect my-app-dev-bridge-net <devcontainer-name>
+```
+
+After `make down && make up` cycles (without a devcontainer rebuild), this step does not need to be repeated.
+
+### 9. Verify connectivity
+
+From inside the devcontainer:
+
+```bash
+curl http://my-app:7357/mcp
+```
 
 ## Configuration Reference
 
@@ -197,51 +266,19 @@ make format        # ruff format
 make shell         # open a shell in the container
 ```
 
-The bridge self-hosts: `.mcp.json` registers `bridge-dev` at `http://my-app:7357/mcp`, so Claude Code can call `echo_test`, `run_tests`, `run_lint`, `run_typecheck`, `run_format_check`, and `sleep_test` as tools for e2e verification.
-
-### One-time setup (devcontainer + Docker network)
-
-The Claude Code devcontainer has an egress firewall. The `bridge-dev` Docker network uses a fixed subnet (`172.21.0.0/24`) that the firewall allows. To enable `my-app` hostname resolution from inside the devcontainer:
-
-**1. Rebuild the devcontainer** (once, to pick up the updated firewall script):
-
-> VS Code: `Dev Containers: Rebuild Container`
-
-**2. Create the bridge-dev network and start the server:**
-
-```bash
-make down          # ensure clean state
-docker network rm bridge-dev 2>/dev/null || true
-make up
-```
-
-**3. Connect the Claude Code container to the network** (from the host, after each devcontainer rebuild):
-
-```bash
-# Find the devcontainer name
-docker ps --format '{{.Names}}'
-
-docker network connect bridge-dev <devcontainer-name>
-```
-
-**4. Verify connectivity** (from inside the devcontainer):
-
-```bash
-curl http://my-app:7357/mcp
-```
-
-After `make down && make up` cycles, only step 3 needs to be repeated (the network and subnet persist).
+The bridge self-hosts for its own development: `.mcp.json` registers the bridge at `http://my-app:7357/mcp` so Claude Code can call `echo_test`, `run_tests`, `run_lint`, `run_typecheck`, `run_format_check`, `run_format_fix`, and `sleep_test` as tools for e2e verification. Follow the Quick Start steps above using the bridge project's own `commands.dev.json` and `docker-compose.yml`.
 
 ## Removal
 
 To remove the bridge from a project, delete these files — no application source code changes needed:
 
 1. `commands.json`
-2. `.mcp.json` (or `claude mcp remove dev-bridge`)
+2. `.mcp.json` (or `claude mcp remove my-app-bridge`)
 3. `docker-compose.dev.yml`
 4. The `dev` stage from your Dockerfile
 5. Bridge references from `doc/DEVELOPMENT.md`
 6. `data/bridge-logs/` (optional, log data)
+7. The bridge subnet rule from `.devcontainer/init-firewall.sh`
 
 Your Makefile targets revert to `docker compose run --rm` behavior automatically.
 
