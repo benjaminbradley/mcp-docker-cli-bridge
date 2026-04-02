@@ -184,4 +184,3 @@ Legend:
 
 - **Configurable payload logging:** Add `BRIDGE_LOG_PAYLOADS` env var (default: true) to allow disabling stdout/stderr content in logs for high-throughput environments.
 - **Structured stderr logging:** The server could emit structured JSON to stderr for container log aggregation.
-- ~~**`asyncio.to_thread` for subprocess:**~~ Done (ae5f52d) — `execute_command` is now async; subprocess runs in thread pool; busy rejection works under real concurrent HTTP load.
