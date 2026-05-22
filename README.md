@@ -39,6 +39,16 @@ The bridge runs inside your application's Docker container during development. I
 - **Dev-only** — Multi-stage Dockerfile integration keeps the bridge out of production images.
 - **Reusable** — Project-agnostic. Configure the command whitelist for any CLI-based project.
 
+## Published Image
+
+The bridge is published to GitHub Container Registry:
+
+```
+ghcr.io/benjaminbradley/mcp-docker-cli-bridge:latest
+```
+
+Version tags follow semver (`v0.1.0`, `v0.1`, `latest`). Pin to a version tag in your Dockerfile to avoid unexpected updates.
+
 ## Quick Start
 
 Replace all `my-*` placeholders with names specific to your project.
@@ -108,20 +118,54 @@ Each command defines:
 
 ### 3. Add the bridge to your Dockerfile
 
-Add a `dev` stage that extends your production image. The bridge files are fetched from the named build context `bridge` (provided by the compose overlay in step 4) using `COPY --from=bridge` — not a subdirectory path:
+Add a `dev` stage that extends your production image. The bridge image is pulled from ghcr.io as a named `FROM` stage:
 
 ```dockerfile
+# Pull the bridge image (pin to a version tag)
+FROM ghcr.io/benjaminbradley/mcp-docker-cli-bridge:v0.1.0 AS bridge
+
 FROM base AS dev
-# COPY --from=<context-name> pulls from the named context defined in
-# docker-compose.dev.yml's additional_contexts, not from a local subdirectory.
-COPY --from=bridge server.py /bridge/server.py
-COPY --from=bridge requirements.txt /bridge/requirements.txt
+COPY --from=bridge /bridge/server.py /bridge/server.py
+COPY --from=bridge /bridge/requirements.txt /bridge/requirements.txt
 RUN pip install --no-cache-dir -r /bridge/requirements.txt \
     && mkdir -p /bridge/logs \
     && chown -R appuser:appuser /bridge
 # Override app entrypoint — this container runs the bridge, not the app
 ENTRYPOINT ["python", "/bridge/server.py"]
 ```
+
+Replace the version tag as appropriate. The `bridge` stage fetches from the registry at build time — no local clone of this repo required.
+
+<details>
+<summary>Alternative: use a local checkout of the bridge repo</summary>
+
+If you want to develop against an unpublished version or pin to local source, use Docker's `additional_contexts` feature instead of a registry reference.
+
+`Dockerfile`:
+```dockerfile
+FROM base AS dev
+# COPY --from=bridge pulls from the named context in docker-compose.dev.yml
+COPY --from=bridge server.py /bridge/server.py
+COPY --from=bridge requirements.txt /bridge/requirements.txt
+RUN pip install --no-cache-dir -r /bridge/requirements.txt \
+    && mkdir -p /bridge/logs \
+    && chown -R appuser:appuser /bridge
+ENTRYPOINT ["python", "/bridge/server.py"]
+```
+
+`docker-compose.dev.yml` (add `additional_contexts` to the build section):
+```yaml
+services:
+  my-app:
+    build:
+      target: dev
+      additional_contexts:
+        bridge: ../mcp-docker-cli-bridge   # path to local bridge checkout
+```
+
+`additional_contexts: bridge:` registers the local directory as the named context. This makes `COPY --from=bridge` resolve to the local directory rather than a registry image.
+
+</details>
 
 ### 4. Create a dev compose override
 
@@ -132,8 +176,7 @@ services:
   my-app:
     build:
       target: dev
-      additional_contexts:
-        bridge: ../mcp-docker-cli-bridge
+      # No additional_contexts needed — bridge image referenced directly in Dockerfile
     # Explicitly set entrypoint here as well as in the Dockerfile.
     # Compose file entrypoint values take precedence over Dockerfile ENTRYPOINT
     # instructions, so if your base docker-compose.yml sets entrypoint: for this
@@ -153,8 +196,6 @@ networks:
     external: true
     name: ${BRIDGE_NETWORK:-my-app-dev-bridge-net}
 ```
-
-`additional_contexts: bridge: ../mcp-docker-cli-bridge` registers the bridge project directory as a named build context. This is what makes `COPY --from=bridge` resolve correctly in the Dockerfile.
 
 ### 5. Start the dev environment
 
@@ -310,7 +351,20 @@ make format        # ruff format
 make shell         # open a shell in the container
 ```
 
-The bridge self-hosts for its own development: `.mcp.json` registers the bridge at `http://my-app:7357/mcp` so Claude Code can call `echo_test`, `run_tests`, `run_lint`, `run_typecheck`, `run_format_check`, `run_format_fix`, and `sleep_test` as tools for e2e verification. Follow the Quick Start steps above using the bridge project's own `commands.dev.json` and `docker-compose.yml`.
+The bridge self-hosts for its own development: `.mcp.json` registers the bridge at `http://my-app:7357/mcp` so Claude Code can call `echo_test`, `run_tests`, `run_lint`, `run_typecheck`, `run_format_check`, `run_format_fix`, and `sleep_test` as tools for e2e verification. Follow the Quick Start steps above using the bridge project's own `dev/commands.dev.json` and `dev/docker-compose.yml`.
+
+See [CONTRIBUTING.md](CONTRIBUTING.md) for setup instructions and contributor workflow.
+
+### Pre-commit hook
+
+`hooks/pre-commit` is a reference implementation of a pre-commit hook that calls bridge MCP tools to run all checks before each commit. It is written in Node.js because the bridge dev environment uses a Node-based devcontainer.
+
+The MCP-over-HTTP protocol it demonstrates is language-agnostic:
+1. `POST /mcp` → `initialize` → receive `mcp-session-id` header
+2. `POST /mcp` (with session header) → `notifications/initialized`
+3. `POST /mcp` (with session header) → `tools/call` → parse SSE response
+
+Consumer projects should adapt this pattern in whatever language their host environment provides. The script lives at `dev/hooks/pre-commit`. Install for bridge development with `make install-hooks`.
 
 ## Removal
 
@@ -433,5 +487,9 @@ The gateway shown will be `W.X.Y.1` — this is the address to block in the fire
 - [Requirements](doc/REQUIREMENTS.md) — Functional requirements
 - [Architecture](doc/ARCHITECTURE.md) — System design, deployment topology, integration model
 - [Specifications](doc/SPECS.md) — MCP API contracts, config schemas, log format, consumer integration specs
-- [Implementation Plan](doc/TODO.md) — Phased build plan with verification gates
+- [Initial Build Plan](doc/buildlog/INITIAL-BUILD-PLAN.md) — Phased build plan with verification gates (archived)
 - `doc/adr/` — Architecture Decision Records
+
+## License
+
+MIT — see [LICENSE](LICENSE).

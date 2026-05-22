@@ -1,0 +1,50 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  # Fast host-Python job: format, lint, type check, unit tests
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt pytest pytest-asyncio ruff mypy
+
+      - name: Format check
+        run: python -m ruff format --check server.py
+
+      - name: Lint
+        run: python -m ruff check server.py
+
+      - name: Type check
+        run: python -m mypy server.py
+
+      - name: Test
+        run: python -m pytest tests/ -v
+
+  # Docker job: validates the same suite runs correctly inside the published image
+  docker-validate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build dev image
+        run: docker compose -f dev/docker-compose.yml build
+
+      - name: Validate inside container
+        run: |
+          docker compose -f dev/docker-compose.yml run --rm --entrypoint "" my-app sh -c \
+            "python -m ruff format --check server.py && \
+             python -m ruff check server.py && \
+             python -m mypy server.py && \
+             python -m pytest tests/ -v"

@@ -1,8 +1,8 @@
-# Implementation Plan — MCP Docker CLI Bridge
+# Initial Build Plan — MCP Docker CLI Bridge
 
-> **Status:** Active — Phases 0, 1, 1.5, 2, 3 complete.
+> **Status:** Archived — all phases complete as of 2026-05-22. Preserved as a historical record of the initial implementation process.
 > **Created:** 2026-04-01
-> **References:** [Requirements](REQUIREMENTS.md) · [Architecture](ARCHITECTURE.md) · [Specs](SPECS.md) · [ADR 001](adr/001-mcp-transport.md) · [ADR 002](adr/002-pydantic-models.md)
+> **References:** [Requirements](../REQUIREMENTS.md) · [Architecture](../ARCHITECTURE.md) · [Specs](../SPECS.md) · [ADR 001](../adr/001-mcp-transport.md) · [ADR 002](../adr/002-pydantic-models.md)
 
 Legend:
 
@@ -181,7 +181,7 @@ Legend:
 
 ### 3.3 — Pre-commit hook
 - [x] Create pre-commit hook script in find-work-bot per SPECS.md §8.5 (using node for JSON parsing).
-- [ ] Document installation in `doc/DEVELOPMENT.md`.
+- [x] Document installation in `doc/DEVELOPMENT.md`.
 - [x] **Verify:** With the dev container running, `git commit` triggers lint/typecheck/test via the bridge. A failing check blocks the commit with clear output. Bridge unreachable → clear error message suggesting `make dev-up`.
 
 ### 3.4 — Makefile dual-mode

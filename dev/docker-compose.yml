@@ -1,22 +1,25 @@
+# Bridge development compose file — for developing and testing the bridge itself.
+# Consumer projects do not use this file; see the Quick Start in README.md.
+
 services:
   my-app:
     build:
-      context: .
+      context: ..       # project root — Dockerfile lives there
       target: dev
     ports:
       - "127.0.0.1:7357:7357"
     volumes:
       - ./commands.dev.json:/bridge/commands.json:ro
-      - ./data/bridge-logs:/bridge/logs
-      # Note: ./server.py is also bind-mounted below via the workspace directory
+      - ../data/bridge-logs:/bridge/logs
+      # Note: ../server.py is also bind-mounted below via the workspace directory
       # mount. The file-level mount is kept for the running server process; the
       # workspace directory mount gives pytest a fresh copy via PYTHONPATH.
-      - ./server.py:/bridge/server.py
-      - ./tests:/bridge/tests
+      - ../server.py:/bridge/server.py
+      - ../tests:/bridge/tests
       # Directory mount so pytest finds the latest server.py via PYTHONPATH
       # (avoids Docker file bind mount inode-staleness issue).
       # Takes effect after `make down && make up`.
-      - .:/workspace
+      - ..:/workspace
     environment:
       - BRIDGE_PORT=7357
       - BRIDGE_HOST=0.0.0.0

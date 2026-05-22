@@ -1,6 +1,6 @@
 {
   "mcpServers": {
-    "bridge-dev": {
+    "my-app-bridge": {
       "type": "http",
       "url": "http://my-app:7357/mcp"
     }

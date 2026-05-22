@@ -1,4 +1,9 @@
-.PHONY: help build up down logs test lint typecheck format format-check validate shell
+# Bridge development Makefile — for developing and testing the bridge itself.
+# Consumer projects do not use or copy this file. See README.md for integration instructions.
+
+COMPOSE := docker compose -f dev/docker-compose.yml
+
+.PHONY: help build up down logs test lint typecheck format format-check validate shell install-hooks
 
 ## help: show this help message
 help:
@@ -6,43 +11,49 @@ help:
 
 ## build: build the dev Docker image
 build:
-	docker compose build
+	$(COMPOSE) build
 
 ## up: start the bridge server in the background
 up:
-	docker compose up -d
+	$(COMPOSE) up -d
 
 ## down: stop and remove the bridge container
 down:
-	docker compose down
+	$(COMPOSE) down
 
 ## logs: tail bridge server logs
 logs:
-	docker compose logs -f my-app
+	$(COMPOSE) logs -f my-app
 
 ## test: run unit tests inside the container
 test:
-	docker compose run --rm --entrypoint "" my-app python -m pytest tests/ -v
+	$(COMPOSE) run --rm --entrypoint "" my-app python -m pytest tests/ -v
 
 ## lint: check code style with ruff
 lint:
-	docker compose run --rm --entrypoint "" my-app python -m ruff check server.py
+	$(COMPOSE) run --rm --entrypoint "" my-app python -m ruff check server.py
 
 ## typecheck: run mypy type checker
 typecheck:
-	docker compose run --rm --entrypoint "" my-app python -m mypy server.py
+	$(COMPOSE) run --rm --entrypoint "" my-app python -m mypy server.py
 
 ## format: auto-format server.py with ruff
 format:
-	docker compose run --rm --entrypoint "" my-app python -m ruff format server.py
+	$(COMPOSE) run --rm --entrypoint "" my-app python -m ruff format server.py
 
 ## format-check: check formatting without modifying files
 format-check:
-	docker compose run --rm --entrypoint "" my-app python -m ruff format --check server.py
+	$(COMPOSE) run --rm --entrypoint "" my-app python -m ruff format --check server.py
 
 ## validate: run all checks (format-check, lint, typecheck, test)
 validate: format-check lint typecheck test
 
 ## shell: open a shell in the bridge container
 shell:
-	docker compose run --rm --entrypoint "" my-app sh
+	$(COMPOSE) run --rm --entrypoint "" my-app sh
+
+## install-hooks: install git hooks for bridge development
+install-hooks:
+	cp dev/hooks/pre-commit .git/hooks/pre-commit
+	chmod +x .git/hooks/pre-commit
+	@echo "Pre-commit hook installed."

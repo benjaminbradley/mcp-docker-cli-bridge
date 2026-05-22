@@ -1,0 +1,119 @@
+#!/usr/bin/env node
+// Pre-commit hook: reference implementation for bridge development (self-hosted).
+//
+// This script calls the bridge's own MCP tools to run format/lint/typecheck/tests
+// before each commit. Requires the bridge dev container to be running (`make up`).
+//
+// To install for bridge development: make install-hooks
+//
+// LANGUAGE NOTE: This hook is written in Node.js because the bridge dev environment
+// uses a Node-based devcontainer. Consumer projects in non-Node environments should
+// reimplement the same pattern in their host language — the protocol is language-agnostic:
+//   1. POST initialize → get session ID
+//   2. POST notifications/initialized
+//   3. POST tools/call for each check → parse SSE response
+//
+// See README.md → "Pre-commit hook" for the full protocol description.
+
+const BRIDGE_URL = process.env.BRIDGE_URL || "http://my-app:7357/mcp";
+const CHECKS = ["run_format_check", "run_lint", "run_typecheck", "run_tests"];
+
+function parseSse(text) {
+  for (const line of text.split("\n")) {
+    if (line.startsWith("data: ")) return JSON.parse(line.slice(6));
+  }
+  throw new Error(`No SSE data line in response: ${text.slice(0, 200)}`);
+}
+
+async function initSession() {
+  const headers = {
+    "Content-Type": "application/json",
+    Accept: "application/json, text/event-stream",
+  };
+  const res = await fetch(BRIDGE_URL, {
+    method: "POST",
+    headers,
+    body: JSON.stringify({
+      jsonrpc: "2.0",
+      id: 1,
+      method: "initialize",
+      params: {
+        protocolVersion: "2024-11-05",
+        capabilities: {},
+        clientInfo: { name: "pre-commit", version: "1.0" },
+      },
+    }),
+  });
+  const sessionId = res.headers.get("mcp-session-id");
+  if (!sessionId) throw new Error("Bridge did not return a session ID");
+  await fetch(BRIDGE_URL, {
+    method: "POST",
+    headers: { ...headers, "Mcp-Session-Id": sessionId },
+    body: JSON.stringify({
+      jsonrpc: "2.0",
+      method: "notifications/initialized",
+      params: {},
+    }),
+  });
+  return sessionId;
+}
+
+async function callTool(sessionId, toolName) {
+  const res = await fetch(BRIDGE_URL, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      Accept: "application/json, text/event-stream",
+      "Mcp-Session-Id": sessionId,
+    },
+    body: JSON.stringify({
+      jsonrpc: "2.0",
+      id: Date.now(),
+      method: "tools/call",
+      params: { name: toolName, arguments: {} },
+    }),
+  });
+  const envelope = parseSse(await res.text());
+  if (envelope.error) throw new Error(`MCP error: ${envelope.error.message}`);
+  return envelope.result;
+}
+
+async function main() {
+  let sessionId;
+  try {
+    sessionId = await initSession();
+  } catch (err) {
+    console.error(`ERROR: Could not reach bridge at ${BRIDGE_URL}`);
+    console.error(`Is the dev container running? Start it with: make up`);
+    console.error(err.message);
+    process.exit(1);
+  }
+
+  let failed = false;
+  for (const check of CHECKS) {
+    process.stdout.write(`  ${check}... `);
+    const result = await callTool(sessionId, check);
+    if (result.isError) {
+      console.log("ERROR");
+      console.error(result.content[0].text);
+      failed = true;
+      continue;
+    }
+    const { stdout, stderr, exit_code } = JSON.parse(result.content[0].text);
+    if (exit_code === 0) {
+      console.log("ok");
+    } else {
+      console.log(`FAILED (exit ${exit_code})`);
+      if (stdout) process.stderr.write(stdout);
+      if (stderr) process.stderr.write(stderr);
+      failed = true;
+    }
+  }
+
+  process.exit(failed ? 1 : 0);
+}
+
+main().catch((err) => {
+  console.error("Unexpected error:", err.message);
+  process.exit(1);
+});

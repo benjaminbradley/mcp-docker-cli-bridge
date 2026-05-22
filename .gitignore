@@ -1,6 +1,19 @@
+# Local development artifacts (not for public repo)
+.autocode/
+.mcp.json
+doc/LESSONS.md
+
 # Autocode local files
 HANDOFF.md
 PROGRESS.md
 .claude/settings.local.json
-__pycache__
-data
+
+# Python artifacts
+__pycache__/
+*.pyc
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# Runtime data
+data/
