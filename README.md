@@ -10,7 +10,7 @@ This project is designed for a specific development topology:
 - **Your application** runs in a separate Docker container, managed by `docker compose`.
 - **Claude Code needs to run commands inside the app container** — tests, linters, type checkers — but cannot use `docker exec` (no socket) and should not be given unrestricted shell access.
 
-The bridge solves this by running a small MCP HTTP server inside the app container. Claude Code calls it like any other MCP tool, and the bridge executes only the specific commands you whitelist.
+The bridge solves this by running a small MCP HTTP server inside the app container. Claude Code calls it like any other MCP tool, and the bridge executes only the specific commands you explicitly allow.
 
 ```
 ┌──────────────────────────────┐     ┌──────────────────────────────┐
@@ -19,25 +19,25 @@ The bridge solves this by running a small MCP HTTP server inside the app contain
 │  Claude Code                 │     │  Your application            │
 │      │                       │     │                              │
 │      │  MCP over HTTP        │     │  MCP CLI Bridge (port 7357)  │
-│      └──────────────────────▶│─────▶      │                      │
+│      └──────────────────────▶│─────▶      │                       │
 │                              │     │      ▼                       │
 │  (no Docker socket access)   │     │  pytest, ruff, mypy, ...     │
 └──────────────────────────────┘     └──────────────────────────────┘
                     shared Docker bridge network
 ```
 
-Both containers communicate over a dedicated Docker bridge network. Claude Code never touches the Docker daemon, and the app container never exposes anything beyond the whitelisted commands.
+Both containers communicate over a dedicated Docker bridge network. Claude Code never touches the Docker daemon, and the app container never exposes anything beyond the allow-listed commands.
 
 ## How It Works
 
-The bridge runs inside your application's Docker container during development. It reads a `commands.json` whitelist that you define, and exposes each command as an MCP tool over Streamable HTTP. Claude Code discovers the tools automatically and calls them like any other MCP tool.
+The bridge runs inside your application's Docker container during development. It reads a `commands.json` allow-list that you define, and exposes each command as an MCP tool over Streamable HTTP. Claude Code discovers the tools automatically and calls them like any other MCP tool.
 
 ## Key Properties
 
-- **MCP native** — Whitelisted commands appear as MCP tools with typed schemas. Claude Code discovers and calls them automatically.
-- **Security-first** — Named command recipes with a read-only whitelist config. `subprocess.run` with `shell=False`. Schema-enforced constraints prevent unauthorized arguments.
+- **MCP native** — Allow-listed commands appear as MCP tools with typed schemas. Claude Code discovers and calls them automatically.
+- **Security-first** — Named command recipes with a read-only allow-list config. `subprocess.run` with `shell=False`. Schema-enforced constraints prevent unauthorized arguments.
 - **Dev-only** — Multi-stage Dockerfile integration keeps the bridge out of production images.
-- **Reusable** — Project-agnostic. Configure the command whitelist for any CLI-based project.
+- **Reusable** — Project-agnostic. Configure the command allow-list for any CLI-based project.
 
 ## Published Image
 
@@ -72,7 +72,7 @@ docker network create --subnet=W.X.Y.0/29 my-app-dev-bridge-net
 
 A /29 gives 8 addresses: the network address, the broadcast address, one gateway address (reserved by Docker for the host bridge interface), and five usable container slots — more than enough for any dev setup.
 
-### 2. Define your command whitelist
+### 2. Define your command allow-list
 
 Create `commands.json` in your project root:
 
@@ -297,11 +297,11 @@ curl http://my-app:7357/mcp
 |---|---|---|
 | `BRIDGE_PORT` | `7357` | Port the MCP server listens on |
 | `BRIDGE_HOST` | `0.0.0.0` | Bind address |
-| `BRIDGE_COMMANDS_FILE` | `/bridge/commands.json` | Path to the whitelist config |
+| `BRIDGE_COMMANDS_FILE` | `/bridge/commands.json` | Path to the allow-list config |
 | `BRIDGE_LOG_DIR` | `/bridge/logs` | Directory for the JSONL audit log |
 | `BRIDGE_LOG_FILE` | `bridge.jsonl` | Log file name |
 
-### commands.json (command whitelist)
+### commands.json (command allow-list)
 
 | Field | Type | Required | Description |
 |---|---|---|---|
@@ -384,12 +384,12 @@ Your Makefile targets revert to `docker compose run --rm` behavior automatically
 
 ### What this setup enforces
 
-- **No Docker socket access.** Claude Code cannot call `docker exec`, inspect containers, or affect anything outside the whitelisted commands. It has no path to the Docker daemon.
-- **Named command whitelist.** Only commands declared in `commands.json` are callable. The set is fixed at server startup; there is no way to add commands at runtime.
+- **No Docker socket access.** Claude Code cannot call `docker exec`, inspect containers, or affect anything outside the allow-listed commands. It has no path to the Docker daemon.
+- **Named command allow-list.** Only commands declared in `commands.json` are callable. The set is fixed at server startup; there is no way to add commands at runtime.
 - **Shell bypass prevented.** All commands run via `subprocess.run(shell=False)`. The executable and its fixed arguments are never passed through a shell interpreter.
 - **Metacharacter blocklist.** Caller-supplied arguments are checked against a blocklist (`;`, `&&`, `|`, `$(`, `>`, `<`, etc.) before execution. Arguments containing any blocked sequence are rejected and logged.
 - **Argument schema enforcement.** Commands with `allow_extra_args: false` expose no `args` parameter in the MCP tool schema — the MCP SDK rejects any call that tries to supply one.
-- **Read-only whitelist.** `commands.json` is volume-mounted `:ro` — the bridge process cannot modify it.
+- **Read-only allow-list.** `commands.json` is volume-mounted `:ro` — the bridge process cannot modify it.
 - **Concurrency lock.** Only one command runs at a time. Concurrent calls receive an immediate error naming the in-progress command, preventing queue-based abuse.
 - **Audit log.** Every invocation (including rejections) is logged with full arguments, exit code, stdout, stderr, and timing. Log entries are append-only from the server's perspective.
 - **Non-root execution.** The bridge server runs as a non-root user inside the container.
@@ -397,12 +397,12 @@ Your Makefile targets revert to `docker compose run --rm` behavior automatically
 
 ### Remaining gaps and limitations
 
-- **No authentication on the MCP endpoint.** The bridge listens on plain HTTP with no token or credential requirement. Any container that can reach the bridge subnet on port 7357 can call any whitelisted tool. The firewall rules mitigate this by limiting which containers can reach the port, but there is no per-caller identity.
+- **No authentication on the MCP endpoint.** The bridge listens on plain HTTP with no token or credential requirement. Any container that can reach the bridge subnet on port 7357 can call any allow-listed tool. The firewall rules mitigate this by limiting which containers can reach the port, but there is no per-caller identity.
 - **No TLS.** Traffic between Claude Code and the bridge is unencrypted. This is acceptable on a local Docker bridge network (traffic does not leave the host) but means the bridge should never be exposed on a routable network interface.
-- **`allow_extra_args: true` commands accept argument-shaped input.** Shell injection is blocked, but a caller can still influence command behavior by crafting argv values (e.g., passing a different test path to pytest). Only whitelist commands with `allow_extra_args: true` where argument variance is intentional.
-- **Subprocess resource usage is uncapped.** Timeouts prevent indefinite hangs, but a whitelisted command can consume significant CPU or memory during its allowed window. This is inherent to any test-runner integration.
+- **`allow_extra_args: true` commands accept argument-shaped input.** Shell injection is blocked, but a caller can still influence command behavior by crafting argv values (e.g., passing a different test path to pytest). Only allow-list commands with `allow_extra_args: true` where argument variance is intentional.
+- **Subprocess resource usage is uncapped.** Timeouts prevent indefinite hangs, but a allow-listed command can consume significant CPU or memory during its allowed window. This is inherent to any test-runner integration.
 - **Audit log is not tamper-proof.** The JSONL file is append-only from the server's perspective, but it is a plain file on a volume mount — a process with filesystem access can modify it.
-- **Shared container filesystem.** The bridge runs in the same container as your application and has access to the same filesystem. It is not a sandbox; it can read application source, config, and data files. This is by design (it needs to run tools against your code), but it means the bridge's attack surface is the container's full filesystem, not just the whitelisted commands.
+- **Shared container filesystem.** The bridge runs in the same container as your application and has access to the same filesystem. It is not a sandbox; it can read application source, config, and data files. This is by design (it needs to run tools against your code), but it means the bridge's attack surface is the container's full filesystem, not just the allow-listed commands.
 
 ## Choosing a Subnet
 
