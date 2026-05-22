@@ -2,7 +2,8 @@
 
 for me:
 
-- add support to truncate response output with tail/grep/etc ?
+- add support to truncate response output with tail/grep/etc
+  this verifies that the publishing-prep changes didn't break anything needed for local development
 
 for reuse:
 

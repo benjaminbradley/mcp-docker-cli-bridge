@@ -47,7 +47,7 @@ The bridge is published to GitHub Container Registry:
 ghcr.io/benjaminbradley/mcp-docker-cli-bridge:latest
 ```
 
-Version tags follow semver (`v0.1.0`, `v0.1`, `latest`). Pin to a version tag in your Dockerfile to avoid unexpected updates.
+Use `latest` for the most recent release, or pin to a specific semver tag (`v0.1.0`, `v0.1`) if you need a reproducible build.
 
 ## Quick Start
 
@@ -122,7 +122,7 @@ Add a `dev` stage that extends your production image. The bridge image is pulled
 
 ```dockerfile
 # Pull the bridge image (pin to a version tag)
-FROM ghcr.io/benjaminbradley/mcp-docker-cli-bridge:v0.1.0 AS bridge
+FROM ghcr.io/benjaminbradley/mcp-docker-cli-bridge:latest AS bridge
 
 FROM base AS dev
 COPY --from=bridge /bridge/server.py /bridge/server.py
@@ -134,7 +134,7 @@ RUN pip install --no-cache-dir -r /bridge/requirements.txt \
 ENTRYPOINT ["python", "/bridge/server.py"]
 ```
 
-Replace the version tag as appropriate. The `bridge` stage fetches from the registry at build time — no local clone of this repo required.
+The `bridge` stage fetches from the registry at build time — no local clone of this repo required. Replace `latest` with a specific tag (`v0.1.0`) if you need a reproducible build.
 
 <details>
 <summary>Alternative: use a local checkout of the bridge repo</summary>

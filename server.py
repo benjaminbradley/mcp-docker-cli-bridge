@@ -6,6 +6,7 @@ import os
 import subprocess
 import sys
 import time
+from collections.abc import Awaitable, Callable
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -130,7 +131,7 @@ def load_commands(path: str) -> CommandsConfig:
 BLOCKED_SEQUENCES = [";", "&&", "||", "|", "`", "$(", ">", "<"]
 
 
-def validate_args(args: list) -> str | None:
+def validate_args(args: list[str]) -> str | None:
     """Return None if args are valid, or an error message string if invalid."""
     for arg in args:
         if not isinstance(arg, str):
@@ -217,7 +218,7 @@ def build_tools(config: CommandsConfig) -> list[Tool]:
 
 def _create_tool_handler(
     name: str, commands: CommandsConfig, log_dir: str, log_file: str
-):
+) -> Callable[..., Awaitable[str]]:
     """Return an async handler function for the named command."""
     entry = commands.commands[name]
 
