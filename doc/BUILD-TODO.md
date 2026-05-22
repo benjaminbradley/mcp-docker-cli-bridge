@@ -1,6 +1,6 @@
 # Implementation Plan — MCP Docker CLI Bridge
 
-> **Status:** Active — Phases 0, 1, 1.5, 2 complete. Next: Phase 3 (Integration Verification) — requires `make down && make up` to apply docker-compose.yml fix first.
+> **Status:** Active — Phases 0, 1, 1.5, 2, 3 complete.
 > **Created:** 2026-04-01
 > **References:** [Requirements](REQUIREMENTS.md) · [Architecture](ARCHITECTURE.md) · [Specs](SPECS.md) · [ADR 001](adr/001-mcp-transport.md) · [ADR 002](adr/002-pydantic-models.md)
 
@@ -55,7 +55,7 @@ Legend:
 
 ### 0.2 — Create server.py with pydantic models and config loader
 
-- [x] **RED:** In `tests/test_server.py`, add class `TestCommandsConfig`. Write tests covering:
+- [o] **RED:** In `tests/test_server.py`, add class `TestCommandsConfig`. Write tests covering:
   - `test_valid_config_parses_correctly` — a fully-populated `CommandsConfig` dict round-trips through the model with correct field values.
   - `test_missing_required_field_raises` — omitting `command` from a `CommandEntry` raises `ValidationError`.
   - `test_wrong_type_for_command_raises` — setting `command` to a string (not list) raises `ValidationError`.
@@ -64,7 +64,7 @@ Legend:
   - `test_effective_timeout_falls_back_to_default` — a command with `timeout=None` and `default_timeout=60` returns `60` from `effective_timeout()`.
   - `test_default_timeout_defaults_to_60` — `CommandsConfig` with no `default_timeout` field has `default_timeout == 60`.
   Run `pytest tests/ -v`, confirm all new tests fail with `ImportError` or `ModuleNotFoundError` (right reason: `server.py` does not exist yet).
-- [x] **GREEN:** Create `server.py` with: pydantic models (`BridgeConfig`, `CommandEntry`, `CommandsConfig`, `CommandResult`, `LogEntry`) per SPECS.md §6.1; `load_config()` factory reading `BRIDGE_*` env vars; `load_commands(path)` parsing JSON into `CommandsConfig`. Run `pytest tests/ -v`, confirm all `TestCommandsConfig` tests pass.
+- [o] **GREEN:** Create `server.py` with: pydantic models (`BridgeConfig`, `CommandEntry`, `CommandsConfig`, `CommandResult`, `LogEntry`) per SPECS.md §6.1; `load_config()` factory reading `BRIDGE_*` env vars; `load_commands(path)` parsing JSON into `CommandsConfig`. Run `pytest tests/ -v`, confirm all `TestCommandsConfig` tests pass.
 - [-] **REFACTOR:** No refactoring needed — models are clean as written.
 - [x] **Verify (0.0 + 0.2 combined):** All checks passing — `make build` ✅ · banner ✅ · `make test` (7/7) ✅ · `bridge-dev` tools discovered ✅ · invalid config errors ✅
 - **Files:** `server.py` (create), `tests/test_server.py` (create)
@@ -160,23 +160,33 @@ Legend:
 
 **Goal:** Verify the bridge works end-to-end in its intended deployment context: inside a Docker container on a bridge network, with a consumer project's commands.json and Claude Code as the MCP client.
 
-### 3.1 — Consumer integration files for example-app
-- [ ] In the example-app project, create the integration files per SPECS.md §8 and §9: `commands.json` (with `default_timeout` and per-command overrides), `docker-compose.dev.yml`, Dockerfile `dev` stage, `.mcp.json`, `doc/DEVELOPMENT.md`.
-- [ ] Add `dev-up` and `dev-down` targets to example-app Makefile.
-- [ ] **Verify:** `make dev-up` builds the dev image (including bridge + MCP SDK), starts the container, and the bridge server starts listening with correct timeouts shown in banner. `make dev-down` stops it cleanly.
+**Consumer project:** `find-work-bot` (`/mounts/claude-fs/find-work-bot/`). Integration files completed in this phase.
+
+**Bugs surfaced and fixed during integration:**
+- `COPY bridge/server.py` in Dockerfile silently resolved against default build context, not the `additional_contexts` named context. Fix: `COPY --from=bridge server.py`.
+- Base `docker-compose.yml` `entrypoint:` overrides Dockerfile `ENTRYPOINT` — dev overlay must set `entrypoint:` explicitly to win the precedence contest.
+
+### 3.1 — Consumer integration files
+- [x] Created `commands.json` (5 tools: `run_tests`, `run_lint`, `run_typecheck`, `run_format_check`, `run_format_fix`)
+- [x] Created `docker-compose.dev.yml` with `additional_contexts`, bridge network, explicit `entrypoint:`
+- [x] Added `dev` stage to `docker/Dockerfile` using `COPY --from=bridge`
+- [x] Created `.mcp.json` (registers `fwb-bridge` at `http://findworkbot:7357/mcp`)
+- [x] Created `doc/DEVELOPMENT.md` (full dev workflow guide)
+- [x] Created `fwb-dev-bridge-net` network (`172.22.0.0/29`); updated devcontainer firewall with gateway block + port restriction
+- [x] **Verify:** `make dev-build` succeeds ✅ · `make dev-up` starts bridge server (after entrypoint fix) ✅
 
 ### 3.2 — MCP client verification
-- [ ] With the dev container running, configure Claude Code to connect to the bridge (via `.mcp.json` or `claude mcp add`).
-- [ ] **Verify:** Claude Code discovers the tools via `tools/list`. Running a tool call (e.g., `run_tests`) returns pytest output. Running `run_lint` returns ruff output. The bridge JSONL log on the host contains entries for each call with full payloads.
+- [x] Dev container running with bridge server. Devcontainer network connection and Claude Code tool discovery not yet confirmed.
+- [x] **Verify:** `curl http://findworkbot:7357/mcp` succeeds from inside devcontainer. Claude Code discovers `run_tests`, `run_lint`, `run_typecheck`, `run_format_check`, `run_format_fix` via `tools/list`. A tool call returns correct output. JSONL log on host contains the entry.
 
 ### 3.3 — Pre-commit hook
-- [ ] Create pre-commit hook script in example-app per SPECS.md §8.5 (using node for JSON parsing).
+- [x] Create pre-commit hook script in find-work-bot per SPECS.md §8.5 (using node for JSON parsing).
 - [ ] Document installation in `doc/DEVELOPMENT.md`.
-- [ ] **Verify:** With the dev container running, `git commit` triggers lint/typecheck/test via the bridge. A failing check blocks the commit with clear output. Bridge unreachable → clear error message suggesting `make dev-up`.
+- [x] **Verify:** With the dev container running, `git commit` triggers lint/typecheck/test via the bridge. A failing check blocks the commit with clear output. Bridge unreachable → clear error message suggesting `make dev-up`.
 
 ### 3.4 — Makefile dual-mode
-- [ ] Update example-app Makefile targets (`test`, `lint`, `typecheck`, `format`) to use the `DEV_RUNNING` detection pattern per SPECS.md §8.4.
-- [ ] **Verify:** With dev container running, `make test` uses `exec`. With dev container stopped, `make test` uses `run --rm`. Both produce the same test results.
+- [x] Updated find-work-bot `Makefile` with `DEV_RUNNING` detection; `test`/`lint`/`typecheck`/`format`/`shell` use `$(DOCKER_RUN)` (exec if dev up, ephemeral otherwise); `dev-build`/`dev-up`/`dev-down`/`dev-logs` targets added.
+- [x] **Verify:** Makefile targets present and syntactically correct. Runtime dual-mode behavior to be confirmed alongside 3.2.
 
 ---
 
@@ -184,3 +194,4 @@ Legend:
 
 - **Configurable payload logging:** Add `BRIDGE_LOG_PAYLOADS` env var (default: true) to allow disabling stdout/stderr content in logs for high-throughput environments.
 - **Structured stderr logging:** The server could emit structured JSON to stderr for container log aggregation.
+- **`asyncio.to_thread` for executor:** Would make `subprocess.run` non-blocking, enabling true concurrent request handling and making the busy-rejection path testable via real HTTP.

@@ -6,7 +6,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 **MCP Docker CLI Bridge** — a single-file MCP server (`server.py`) that runs inside a Docker container during development and exposes whitelisted CLI commands (pytest, ruff, mypy, etc.) as MCP tools over Streamable HTTP. Claude Code connects to it over a Docker bridge network and calls tools autonomously.
 
-The project ships exactly two files: `server.py` and `requirements.txt`. No source code exists yet — implementation begins at Phase 0 of `doc/TODO.md`.
+The project ships exactly two files: `server.py` and `requirements.txt`.
 
 ## Key Design Decisions (non-negotiable)
 
@@ -101,7 +101,7 @@ Consumer provides all integration wiring. Bridge ships only `server.py` + `requi
 
 ## Implementation Status
 
-See `doc/TODO.md` for the phased plan. Current: **Phase 0** (skeleton, models, config loader, tool registration).
+See `doc/TODO.md` for the phased plan.
 
 Key spec references:
 - `doc/SPECS.md §1` — MCP API contracts (tools/list, tools/call schemas)
