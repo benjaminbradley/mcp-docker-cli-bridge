@@ -32,19 +32,19 @@ test:
 
 ## lint: check code style with ruff
 lint:
-	$(COMPOSE) run --rm --entrypoint "" my-app python -m ruff check server.py
+	$(COMPOSE) run --rm --workdir /workspace --entrypoint "" my-app python -m ruff check server.py
 
 ## typecheck: run mypy type checker
 typecheck:
-	$(COMPOSE) run --rm --entrypoint "" my-app python -m mypy server.py
+	$(COMPOSE) run --rm --workdir /workspace --entrypoint "" my-app python -m mypy server.py
 
 ## format: auto-format server.py with ruff
 format:
-	$(COMPOSE) run --rm --entrypoint "" my-app python -m ruff format server.py
+	$(COMPOSE) run --rm --workdir /workspace --entrypoint "" my-app python -m ruff format server.py
 
 ## format-check: check formatting without modifying files
 format-check:
-	$(COMPOSE) run --rm --entrypoint "" my-app python -m ruff format --check server.py
+	$(COMPOSE) run --rm --workdir /workspace --entrypoint "" my-app python -m ruff format --check server.py
 
 ## validate: run all checks (format-check, lint, typecheck, test)
 validate: format-check lint typecheck test

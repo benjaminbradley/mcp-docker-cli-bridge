@@ -20,22 +20,13 @@ The project ships exactly two files: `server.py` and `requirements.txt`.
 
 ## Development Commands
 
-No running server or test suite yet (implementation phase). Once `server.py` exists:
+Use the bridge-dev MCP server to run tests/checks on the codebase during development.
 
-```bash
-# Install dependencies in a venv
-pip install -r requirements.txt
+**If desired/required syntax is not available** (additional commands or args are needed):
+  - If the existing commands.dev.json can be easily modified to accommodate the additional reqs, make the change and surface to the operator that it will need to be reloaded by an app container restart, along with any changes in security posture implied by this change.
+  - Otherwise, surface this gap to the operator with impacts.
 
-# Run the server directly (requires commands.json at BRIDGE_COMMANDS_FILE path)
-python server.py
-
-# Lint
-ruff check server.py
-ruff format server.py
-
-# Type check
-mypy server.py
-```
+**You do not have docker access.** Claude code is running inside an isolated docker container. Any commands which require docker access must be run from the host by the operator.
 
 ### Verifying a Running Server
 

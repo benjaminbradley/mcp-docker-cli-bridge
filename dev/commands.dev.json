@@ -16,22 +16,22 @@
     "run_lint": {
       "command": ["python", "-m", "ruff", "check", "server.py"],
       "allow_extra_args": false,
-      "cwd": "/bridge"
+      "cwd": "/workspace"
     },
     "run_typecheck": {
       "command": ["python", "-m", "mypy", "server.py"],
       "allow_extra_args": false,
-      "cwd": "/bridge"
+      "cwd": "/workspace"
     },
     "run_format_check": {
       "command": ["python", "-m", "ruff", "format", "--check", "server.py"],
       "allow_extra_args": false,
-      "cwd": "/bridge"
+      "cwd": "/workspace"
     },
     "run_format": {
       "command": ["python", "-m", "ruff", "format"],
       "allow_extra_args": true,
-      "cwd": "/bridge"
+      "cwd": "/workspace"
     },
     "sleep_test": {
       "command": ["sleep"],
