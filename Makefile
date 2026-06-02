@@ -2,8 +2,9 @@
 # Consumer projects do not use or copy this file. See README.md for integration instructions.
 
 COMPOSE := docker compose -f dev/docker-compose.yml
+SANDBOX_NETWORK ?= bridge-dev
 
-.PHONY: help build up down logs test lint typecheck format format-check validate shell install-hooks
+.PHONY: help build up down logs test lint typecheck format format-check validate shell install-hooks connect
 
 ## help: show this help message
 help:
@@ -57,3 +58,15 @@ install-hooks:
 	cp dev/hooks/pre-commit .git/hooks/pre-commit
 	chmod +x .git/hooks/pre-commit
 	@echo "Pre-commit hook installed."
+
+## Connect running devcontainer to sandbox network (run after each rebuild)
+connect:
+	$(eval DEVCONTAINER := $(shell docker ps \
+	  --filter "label=devcontainer.local_folder=$(CURDIR)" \
+	  --format "{{.Names}}" | head -1))
+	@if [ -z "$(DEVCONTAINER)" ]; then \
+	  echo "ERROR: No devcontainer found for $(CURDIR)"; exit 1; \
+	fi
+	@echo "Connecting $(DEVCONTAINER) to $(SANDBOX_NETWORK)..."
+	@docker network connect $(SANDBOX_NETWORK) $(DEVCONTAINER) || true
+	@echo "Done"
