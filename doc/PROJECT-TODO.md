@@ -1,9 +1,4 @@
-#LLMs: IGNORE THIS FILE#
-
-for me:
-
-- add support to truncate response output with tail/grep/etc
-  this verifies that the publishing-prep changes didn't break anything needed for local development
+# Project-level to-do
 
 for reuse:
 
@@ -12,4 +7,3 @@ for reuse:
   - all errors should point out where to fix (file & line/section, whenever possible)
 - review for publishing
   - security - would it make sense to add authentication on the MCP endpoint, TLS, or is that overkill?
-- push to github
