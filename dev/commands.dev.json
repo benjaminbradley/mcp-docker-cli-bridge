@@ -10,7 +10,7 @@
     "run_tests": {
       "command": ["python", "-m", "pytest", "tests/", "-v"],
       "allow_extra_args": true,
-      "cwd": "/bridge",
+      "cwd": "/workspace",
       "timeout": 60
     },
     "run_lint": {

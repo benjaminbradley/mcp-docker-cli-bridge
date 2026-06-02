@@ -28,7 +28,7 @@ logs:
 
 ## test: run unit tests inside the container
 test:
-	$(COMPOSE) run --rm --entrypoint "" my-app python -m pytest tests/ -v
+	$(COMPOSE) run --rm --workdir /workspace --entrypoint "" my-app python -m pytest tests/ -v
 
 ## lint: check code style with ruff
 lint:

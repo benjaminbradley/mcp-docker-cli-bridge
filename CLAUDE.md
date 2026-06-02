@@ -20,13 +20,23 @@ The project ships exactly two files: `server.py` and `requirements.txt`.
 
 ## Development Commands
 
-Use the bridge-dev MCP server to run tests/checks on the codebase during development.
+**Always use the bridge-dev MCP tools** — never use Bash to run tests, lint, typecheck, or format. The MCP tools run inside the correct Docker environment with the right paths.
+
+| MCP tool | What it runs |
+|---|---|
+| `mcp__bridge-dev__run_tests` | `pytest tests/ -v` (supports extra `args`) |
+| `mcp__bridge-dev__run_lint` | `ruff check server.py` |
+| `mcp__bridge-dev__run_typecheck` | `mypy server.py` |
+| `mcp__bridge-dev__run_format_check` | `ruff format --check server.py` |
+| `mcp__bridge-dev__run_format` | `ruff format server.py` (supports extra `args`) |
+
+All tools now run from `cwd: /workspace` so they target the directory-mounted (always-fresh) `server.py`.
 
 **If desired/required syntax is not available** (additional commands or args are needed):
-  - If the existing commands.dev.json can be easily modified to accommodate the additional reqs, make the change and surface to the operator that it will need to be reloaded by an app container restart, along with any changes in security posture implied by this change.
-  - Otherwise, surface this gap to the operator with impacts.
+  - If `dev/commands.dev.json` can easily be extended, make the change and tell the operator it requires a container restart (`make down && make up` then `make connect`), and describe any security posture change.
+  - Otherwise, surface the gap to the operator with impacts.
 
-**You do not have docker access.** Claude code is running inside an isolated docker container. Any commands which require docker access must be run from the host by the operator.
+**You do not have docker access.** Claude Code runs inside an isolated Docker container. Any commands requiring Docker must be run by the operator from the host.
 
 ### Verifying a Running Server
 
