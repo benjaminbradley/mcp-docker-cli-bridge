@@ -12,7 +12,6 @@ services:
     volumes:
       - ./commands.dev.json:/bridge/commands.json:ro
       - ../data/bridge-logs:/bridge/logs
-      - ../tests:/bridge/tests
       - ..:/workspace
     environment:
       - BRIDGE_PORT=7357

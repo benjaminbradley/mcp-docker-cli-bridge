@@ -4,7 +4,7 @@
     "echo_test": {
       "command": ["echo"],
       "allow_extra_args": true,
-      "cwd": "/bridge",
+      "cwd": "/workspace",
       "timeout": 5
     },
     "run_tests": {
@@ -36,7 +36,7 @@
     "sleep_test": {
       "command": ["sleep"],
       "allow_extra_args": true,
-      "cwd": "/bridge",
+      "cwd": "/workspace",
       "timeout": 10
     }
   }
