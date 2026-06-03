@@ -16,7 +16,7 @@ from pathlib import Path
 
 from mcp.server.fastmcp import FastMCP
 from mcp.types import Tool
-from pydantic import BaseModel, field_validator
+from pydantic import BaseModel, ValidationError, field_validator
 
 # ---------------------------------------------------------------------------
 # Pydantic models
@@ -511,14 +511,25 @@ def load_commands(path: str) -> CommandsConfig:
         with open(path) as f:
             data = json.load(f)
     except FileNotFoundError:
-        print(f"Error: commands file not found: {path}", file=sys.stderr)
+        print(
+            f"Error: commands file not found: {path}\n"
+            f"  Set BRIDGE_COMMANDS_FILE to override the default path",
+            file=sys.stderr,
+        )
         sys.exit(1)
     except json.JSONDecodeError as e:
-        print(f"Error: invalid JSON in {path}: {e}", file=sys.stderr)
+        print(f"Error: {path}:{e.lineno}:{e.colno}: {e.msg}", file=sys.stderr)
         sys.exit(1)
 
     try:
         return CommandsConfig(**data)
+    except ValidationError as e:
+        lines = [f"Error: invalid commands config in {path}:"]
+        for err in e.errors():
+            loc = ".".join(str(part) for part in err["loc"])
+            lines.append(f"  {loc}: {err['msg']}")
+        print("\n".join(lines), file=sys.stderr)
+        sys.exit(1)
     except Exception as e:
         print(f"Error: invalid commands config in {path}:\n{e}", file=sys.stderr)
         sys.exit(1)
@@ -538,7 +549,7 @@ def validate_args(args: list[str]) -> str | None:
             return f"Argument must be a string, got {type(arg).__name__}: {arg!r}"
         for seq in BLOCKED_SEQUENCES:
             if seq in arg:
-                return f"Argument contains disallowed characters: {arg!r}"
+                return f"Argument contains disallowed sequence {seq!r} in: {arg!r}"
     return None
 
 
@@ -720,7 +731,10 @@ def _create_tool_handler(
             except subprocess.TimeoutExpired as e:
                 raise Exception(f"Command '{name}' timed out after {commands.effective_timeout(name)}s") from e
             except FileNotFoundError as e:
-                raise Exception(f"Command '{name}' executable not found: {entry.command[0]!r}") from e
+                raise Exception(
+                    f"Command '{name}' executable not found: {entry.command[0]!r} "
+                    f"(cwd={entry.cwd!r}) — check the 'command' field in commands.json"
+                ) from e
 
             # Pipe filter (applied to raw output; log records pre-filter bytes)
             all_warnings: list[str] = []
