@@ -41,6 +41,8 @@ The bridge runs inside your application's Docker container during development. I
 - **Dev-only** — Multi-stage Dockerfile integration keeps the bridge out of production images.
 - **Reusable** — Project-agnostic. Configure the command allow-list for any CLI-based project.
 
+See [SECURITY.md](doc/SECURITY.md) for a full threat model analysis and security implications for different usage scenarios.
+
 ## Published Image
 
 The bridge is published to GitHub Container Registry:
