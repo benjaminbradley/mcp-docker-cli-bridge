@@ -1,4 +1,5 @@
 """Tests for server.py — MCP Docker CLI Bridge."""
+
 import asyncio
 import json
 import subprocess
@@ -56,11 +57,7 @@ class TestCommandsConfig:
 
         config = CommandsConfig(
             default_timeout=60,
-            commands={
-                "fast": CommandEntry(
-                    command=["echo"], allow_extra_args=False, cwd="/app", timeout=30
-                )
-            },
+            commands={"fast": CommandEntry(command=["echo"], allow_extra_args=False, cwd="/app", timeout=30)},
         )
         assert config.effective_timeout("fast") == 30
 
@@ -69,22 +66,14 @@ class TestCommandsConfig:
 
         config = CommandsConfig(
             default_timeout=60,
-            commands={
-                "slow": CommandEntry(
-                    command=["sleep"], allow_extra_args=True, cwd="/app"
-                )
-            },
+            commands={"slow": CommandEntry(command=["sleep"], allow_extra_args=True, cwd="/app")},
         )
         assert config.effective_timeout("slow") == 60
 
     def test_default_timeout_defaults_to_60(self):
         from server import CommandEntry, CommandsConfig
 
-        config = CommandsConfig(
-            commands={
-                "cmd": CommandEntry(command=["echo"], allow_extra_args=False, cwd="/app")
-            }
-        )
+        config = CommandsConfig(commands={"cmd": CommandEntry(command=["echo"], allow_extra_args=False, cwd="/app")})
         assert config.default_timeout == 60
 
 
@@ -325,9 +314,7 @@ class TestApplyPipe:
     async def test_stream_merge_ordering(self):
         from server import GrepOp, StreamMergeOp, apply_pipe
 
-        stdout, stderr, w = await apply_pipe(
-            [StreamMergeOp(), GrepOp("err")], "out\n", "err\n"
-        )
+        stdout, stderr, w = await apply_pipe([StreamMergeOp(), GrepOp("err")], "out\n", "err\n")
         assert "err" in stdout
         assert stderr == ""
 
@@ -335,9 +322,7 @@ class TestApplyPipe:
     async def test_grep_literal_filters_lines(self):
         from server import GrepOp, apply_pipe
 
-        stdout, stderr, w = await apply_pipe(
-            [GrepOp("PASS")], "PASS: test1\nFAIL: test2\nPASS: test3\n", ""
-        )
+        stdout, stderr, w = await apply_pipe([GrepOp("PASS")], "PASS: test1\nFAIL: test2\nPASS: test3\n", "")
         assert "PASS: test1" in stdout
         assert "FAIL: test2" not in stdout
         assert "PASS: test3" in stdout
@@ -355,9 +340,7 @@ class TestApplyPipe:
     async def test_grep_regex_filters_lines(self):
         from server import GrepOp, apply_pipe
 
-        stdout, stderr, w = await apply_pipe(
-            [GrepOp("ERR.*", regex=True)], "ERROR: bad\ninfo: ok\nERROR: worse\n", ""
-        )
+        stdout, stderr, w = await apply_pipe([GrepOp("ERR.*", regex=True)], "ERROR: bad\ninfo: ok\nERROR: worse\n", "")
         assert "ERROR: bad" in stdout
         assert "info: ok" not in stdout
         assert w == []
@@ -383,9 +366,7 @@ class TestApplyPipe:
     async def test_grep_case_insensitive(self):
         from server import GrepOp, apply_pipe
 
-        stdout, stderr, w = await apply_pipe(
-            [GrepOp("error", ignore_case=True)], "Error here\nok\nERROR bad\n", ""
-        )
+        stdout, stderr, w = await apply_pipe([GrepOp("error", ignore_case=True)], "Error here\nok\nERROR bad\n", "")
         assert "Error here" in stdout
         assert "ERROR bad" in stdout
         assert "ok" not in stdout
@@ -407,9 +388,7 @@ class TestApplyPipe:
     async def test_grep_line_numbers(self):
         from server import GrepOp, apply_pipe
 
-        stdout, stderr, w = await apply_pipe(
-            [GrepOp("FAIL", line_numbers=True)], "ok\nFAIL test\nok\n", ""
-        )
+        stdout, stderr, w = await apply_pipe([GrepOp("FAIL", line_numbers=True)], "ok\nFAIL test\nok\n", "")
         assert "2:FAIL test" in stdout
 
     @pytest.mark.asyncio
@@ -439,9 +418,7 @@ class TestApplyPipe:
         from server import GrepOp, apply_pipe
 
         lines = "before\nFAIL\nafter\n"
-        stdout, stderr, w = await apply_pipe(
-            [GrepOp("FAIL", context_before=1, context_after=1)], lines, ""
-        )
+        stdout, stderr, w = await apply_pipe([GrepOp("FAIL", context_before=1, context_after=1)], lines, "")
         assert "before" in stdout
         assert "FAIL" in stdout
         assert "after" in stdout
@@ -451,9 +428,7 @@ class TestApplyPipe:
         from server import GrepOp, apply_pipe
 
         lines = "FAIL1\nshared\nFAIL2\n"
-        stdout, stderr, w = await apply_pipe(
-            [GrepOp("FAIL", context_after=1)], lines, ""
-        )
+        stdout, stderr, w = await apply_pipe([GrepOp("FAIL", context_after=1)], lines, "")
         result_lines = [l for l in stdout.splitlines() if l]
         # "shared" should appear only once even though it's after both matches
         assert result_lines.count("shared") == 1
@@ -502,9 +477,7 @@ class TestApplyPipe:
     async def test_grep_applies_to_stdout_only_when_not_merged(self):
         from server import GrepOp, apply_pipe
 
-        stdout, stderr, w = await apply_pipe(
-            [GrepOp("PASS")], "PASS: ok\n", "FAIL: stderr\n"
-        )
+        stdout, stderr, w = await apply_pipe([GrepOp("PASS")], "PASS: ok\n", "FAIL: stderr\n")
         assert "PASS: ok" in stdout
         assert stderr == "FAIL: stderr\n"
 
@@ -533,9 +506,7 @@ class TestCacheSubsystem:
 
         monkeypatch.setattr("server._CACHE_DIR", str(tmp_path / "cache"))
         result = save_cache("out", "err", 0)
-        assert re.fullmatch(
-            r"[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}", result
-        )
+        assert re.fullmatch(r"[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}", result)
 
     def test_save_load_roundtrip(self, tmp_path, monkeypatch):
         from server import load_cache, save_cache
@@ -627,9 +598,7 @@ class TestBuildToolsPhase4:
     def _make_config(self, **commands):
         from server import CommandEntry, CommandsConfig
 
-        return CommandsConfig(
-            commands={name: CommandEntry(**kwargs) for name, kwargs in commands.items()}
-        )
+        return CommandsConfig(commands={name: CommandEntry(**kwargs) for name, kwargs in commands.items()})
 
     def test_pipe_param_in_schema(self):
         from server import build_tools
@@ -697,9 +666,7 @@ class TestToolHandlersPhase4:
     def _make_config(self, **commands):
         from server import CommandEntry, CommandsConfig
 
-        return CommandsConfig(
-            commands={name: CommandEntry(**kwargs) for name, kwargs in commands.items()}
-        )
+        return CommandsConfig(commands={name: CommandEntry(**kwargs) for name, kwargs in commands.items()})
 
     def _reset_lock(self):
         import server
@@ -712,9 +679,7 @@ class TestToolHandlersPhase4:
         import server
 
         self._reset_lock()
-        config = self._make_config(
-            echo=dict(command=["echo", "hello"], allow_extra_args=True, cwd="/tmp")
-        )
+        config = self._make_config(echo=dict(command=["echo", "hello"], allow_extra_args=True, cwd="/tmp"))
         handler = server._create_tool_handler("echo", config, "/tmp", "test.jsonl")
         result = await handler(args=[], pipe="head 1")
         assert result is not None
@@ -725,9 +690,7 @@ class TestToolHandlersPhase4:
 
         self._reset_lock()
         monkeypatch.setattr("server._CACHE_DIR", str(tmp_path / "cache"))
-        config = self._make_config(
-            echo=dict(command=["echo", "hello"], allow_extra_args=False, cwd="/tmp")
-        )
+        config = self._make_config(echo=dict(command=["echo", "hello"], allow_extra_args=False, cwd="/tmp"))
         handler = server._create_tool_handler("echo", config, "/tmp", "test.jsonl")
         result = await handler(cache=True)
         data = json.loads(result)
@@ -740,9 +703,7 @@ class TestToolHandlersPhase4:
         self._reset_lock()
         monkeypatch.setattr("server._CACHE_DIR", str(tmp_path / "cache"))
         cache_id = server.save_cache("cached stdout\n", "", 0)
-        config = self._make_config(
-            echo=dict(command=["echo"], allow_extra_args=False, cwd="/tmp")
-        )
+        config = self._make_config(echo=dict(command=["echo"], allow_extra_args=False, cwd="/tmp"))
         handler = server._create_tool_handler("echo", config, "/tmp", "test.jsonl")
         result = await handler(cache_id=cache_id)
         data = json.loads(result)
@@ -755,9 +716,7 @@ class TestPipeIntegration:
     def _make_config(self, **commands):
         from server import CommandEntry, CommandsConfig
 
-        return CommandsConfig(
-            commands={name: CommandEntry(**kwargs) for name, kwargs in commands.items()}
-        )
+        return CommandsConfig(commands={name: CommandEntry(**kwargs) for name, kwargs in commands.items()})
 
     def _reset_lock(self):
         import server
@@ -847,9 +806,7 @@ class TestPipeIntegration:
         import server
 
         self._reset_lock()
-        config = self._make_config(
-            py=dict(command=["python", "-c", "pass"], allow_extra_args=False, cwd="/tmp")
-        )
+        config = self._make_config(py=dict(command=["python", "-c", "pass"], allow_extra_args=False, cwd="/tmp"))
         handler = server._create_tool_handler("py", config, str(tmp_path), "t.jsonl")
         with pytest.raises(Exception, match="Unsupported"):
             await handler(pipe="awk '{print}'")
@@ -862,9 +819,7 @@ class TestPipeIntegration:
 
         self._reset_lock()
         monkeypatch.setattr("server._CACHE_DIR", str(tmp_path / "cache"))
-        config = self._make_config(
-            py=dict(command=["python", "-c", "print('hi')"], allow_extra_args=False, cwd="/tmp")
-        )
+        config = self._make_config(py=dict(command=["python", "-c", "print('hi')"], allow_extra_args=False, cwd="/tmp"))
         handler = server._create_tool_handler("py", config, str(tmp_path), "t.jsonl")
         result = await handler(cache=True)
         data = json.loads(result)
@@ -881,9 +836,7 @@ class TestPipeIntegration:
         self._reset_lock()
         monkeypatch.setattr("server._CACHE_DIR", str(tmp_path / "cache"))
         cache_id = server.save_cache("line1\nline2\nline3\n", "", 0)
-        config = self._make_config(
-            echo=dict(command=["echo"], allow_extra_args=False, cwd="/tmp")
-        )
+        config = self._make_config(echo=dict(command=["echo"], allow_extra_args=False, cwd="/tmp"))
         handler = server._create_tool_handler("echo", config, str(tmp_path), "t.jsonl")
         result = await handler(cache_id=cache_id, pipe="head 1")
         data = json.loads(result)
@@ -897,9 +850,7 @@ class TestPipeIntegration:
 
         monkeypatch.setattr("server._CACHE_DIR", str(tmp_path / "cache"))
         cache_id = server.save_cache("full content\n", "", 0)
-        config = self._make_config(
-            echo=dict(command=["echo"], allow_extra_args=False, cwd="/tmp")
-        )
+        config = self._make_config(echo=dict(command=["echo"], allow_extra_args=False, cwd="/tmp"))
         handler = server._create_tool_handler("echo", config, str(tmp_path), "t.jsonl")
         result = await handler(cache_id=cache_id)
         data = json.loads(result)
@@ -916,9 +867,7 @@ class TestPipeIntegration:
         cache_id = server.save_cache("data", "", 0)
         old_time = time.time() - (25 * 3600)
         os.utime(str(tmp_path / "cache" / cache_id), (old_time, old_time))
-        config = self._make_config(
-            echo=dict(command=["echo"], allow_extra_args=False, cwd="/tmp")
-        )
+        config = self._make_config(echo=dict(command=["echo"], allow_extra_args=False, cwd="/tmp"))
         handler = server._create_tool_handler("echo", config, str(tmp_path), "t.jsonl")
         with pytest.raises(Exception, match="expired"):
             await handler(cache_id=cache_id)
@@ -928,9 +877,7 @@ class TestPipeIntegration:
         import server
 
         monkeypatch.setattr("server._CACHE_DIR", str(tmp_path / "cache"))
-        config = self._make_config(
-            echo=dict(command=["echo"], allow_extra_args=False, cwd="/tmp")
-        )
+        config = self._make_config(echo=dict(command=["echo"], allow_extra_args=False, cwd="/tmp"))
         handler = server._create_tool_handler("echo", config, str(tmp_path), "t.jsonl")
         with pytest.raises(Exception, match="Invalid cache_id"):
             await handler(cache_id="../../etc")
@@ -940,9 +887,7 @@ class TestPipeIntegration:
         import server
 
         self._reset_lock()
-        config = self._make_config(
-            echo=dict(command=["echo", "hello"], allow_extra_args=True, cwd="/tmp")
-        )
+        config = self._make_config(echo=dict(command=["echo", "hello"], allow_extra_args=True, cwd="/tmp"))
         handler = server._create_tool_handler("echo", config, str(tmp_path), "t.jsonl")
         result = await handler(args=[])
         data = json.loads(result)
@@ -1061,11 +1006,7 @@ class TestBuildTools:
     def _make_config(self, **commands):
         from server import CommandEntry, CommandsConfig
 
-        return CommandsConfig(
-            commands={
-                name: CommandEntry(**kwargs) for name, kwargs in commands.items()
-            }
-        )
+        return CommandsConfig(commands={name: CommandEntry(**kwargs) for name, kwargs in commands.items()})
 
     def test_builds_one_tool_per_command(self):
         from server import build_tools
@@ -1181,19 +1122,13 @@ class TestExecuteCommand:
     def _make_config(self, **commands):
         from server import CommandEntry, CommandsConfig
 
-        return CommandsConfig(
-            commands={
-                name: CommandEntry(**kwargs) for name, kwargs in commands.items()
-            }
-        )
+        return CommandsConfig(commands={name: CommandEntry(**kwargs) for name, kwargs in commands.items()})
 
     @pytest.mark.asyncio
     async def test_captures_stdout_and_exit_code(self):
         from server import execute_command
 
-        config = self._make_config(
-            echo=dict(command=["echo", "hello"], allow_extra_args=True, cwd="/tmp")
-        )
+        config = self._make_config(echo=dict(command=["echo", "hello"], allow_extra_args=True, cwd="/tmp"))
         result = await execute_command("echo", ["world"], config)
         assert "hello" in result.stdout
         assert "world" in result.stdout
@@ -1231,9 +1166,7 @@ class TestExecuteCommand:
     async def test_timeout_raises(self):
         from server import execute_command
 
-        config = self._make_config(
-            slow=dict(command=["sleep", "5"], allow_extra_args=False, cwd="/tmp", timeout=1)
-        )
+        config = self._make_config(slow=dict(command=["sleep", "5"], allow_extra_args=False, cwd="/tmp", timeout=1))
         with pytest.raises(subprocess.TimeoutExpired):
             await execute_command("slow", [], config)
 
@@ -1241,9 +1174,7 @@ class TestExecuteCommand:
     async def test_missing_executable_raises(self):
         from server import execute_command
 
-        config = self._make_config(
-            bad=dict(command=["nonexistent_binary_xyz"], allow_extra_args=False, cwd="/tmp")
-        )
+        config = self._make_config(bad=dict(command=["nonexistent_binary_xyz"], allow_extra_args=False, cwd="/tmp"))
         with pytest.raises(FileNotFoundError):
             await execute_command("bad", [], config)
 
@@ -1254,11 +1185,7 @@ class TestToolHandlers:
     def _make_config(self, **commands):
         from server import CommandEntry, CommandsConfig
 
-        return CommandsConfig(
-            commands={
-                name: CommandEntry(**kwargs) for name, kwargs in commands.items()
-            }
-        )
+        return CommandsConfig(commands={name: CommandEntry(**kwargs) for name, kwargs in commands.items()})
 
     def _reset_lock(self):
         import server
@@ -1271,9 +1198,7 @@ class TestToolHandlers:
         import server
 
         self._reset_lock()
-        config = self._make_config(
-            echo=dict(command=["echo", "hello"], allow_extra_args=True, cwd="/tmp")
-        )
+        config = self._make_config(echo=dict(command=["echo", "hello"], allow_extra_args=True, cwd="/tmp"))
         handler = server._create_tool_handler("echo", config, "/tmp", "bridge-test.jsonl")
         result_str = await handler(args=["world"])
         data = json.loads(result_str)
@@ -1304,9 +1229,7 @@ class TestToolHandlers:
         import server
 
         self._reset_lock()
-        config = self._make_config(
-            echo=dict(command=["echo"], allow_extra_args=True, cwd="/tmp")
-        )
+        config = self._make_config(echo=dict(command=["echo"], allow_extra_args=True, cwd="/tmp"))
         handler = server._create_tool_handler("echo", config, "/tmp", "bridge-test.jsonl")
         with pytest.raises(Exception, match=";"):
             await handler(args=["--flag; rm -rf /"])
@@ -1316,9 +1239,7 @@ class TestToolHandlers:
         import server
 
         self._reset_lock()
-        config = self._make_config(
-            slow=dict(command=["sleep", "5"], allow_extra_args=False, cwd="/tmp", timeout=1)
-        )
+        config = self._make_config(slow=dict(command=["sleep", "5"], allow_extra_args=False, cwd="/tmp", timeout=1))
         handler = server._create_tool_handler("slow", config, "/tmp", "bridge-test.jsonl")
         with pytest.raises(Exception, match="timed out after 1s"):
             await handler()
@@ -1328,9 +1249,7 @@ class TestToolHandlers:
         import server
 
         self._reset_lock()
-        config = self._make_config(
-            bad=dict(command=["nonexistent_xyz"], allow_extra_args=False, cwd="/tmp")
-        )
+        config = self._make_config(bad=dict(command=["nonexistent_xyz"], allow_extra_args=False, cwd="/tmp"))
         handler = server._create_tool_handler("bad", config, "/tmp", "bridge-test.jsonl")
         with pytest.raises(Exception, match="not found"):
             await handler()
@@ -1343,9 +1262,7 @@ class TestToolHandlers:
         server._current_command = "other_cmd"
         await server._lock.acquire()
         try:
-            config = self._make_config(
-                echo=dict(command=["echo"], allow_extra_args=False, cwd="/tmp")
-            )
+            config = self._make_config(echo=dict(command=["echo"], allow_extra_args=False, cwd="/tmp"))
             handler = server._create_tool_handler("echo", config, "/tmp", "bridge-test.jsonl")
             with pytest.raises(Exception, match="busy"):
                 await handler()
@@ -1437,9 +1354,17 @@ class TestLogRequest:
         line = (log_dir / "bridge.jsonl").read_text().splitlines()[0]
         data = json.loads(line)
         expected_keys = {
-            "timestamp", "command", "args", "exit_code", "duration_ms",
-            "stdout", "stderr", "stdout_bytes", "stderr_bytes",
-            "rejected", "rejection_reason",
+            "timestamp",
+            "command",
+            "args",
+            "exit_code",
+            "duration_ms",
+            "stdout",
+            "stderr",
+            "stdout_bytes",
+            "stderr_bytes",
+            "rejected",
+            "rejection_reason",
         }
         assert expected_keys <= set(data.keys())
 
@@ -1450,11 +1375,7 @@ class TestLogIntegration:
     def _make_config(self, **commands):
         from server import CommandEntry, CommandsConfig
 
-        return CommandsConfig(
-            commands={
-                name: CommandEntry(**kwargs) for name, kwargs in commands.items()
-            }
-        )
+        return CommandsConfig(commands={name: CommandEntry(**kwargs) for name, kwargs in commands.items()})
 
     def _reset_lock(self):
         import server
@@ -1474,9 +1395,7 @@ class TestLogIntegration:
         import server
 
         self._reset_lock()
-        config = self._make_config(
-            echo=dict(command=["echo", "hi"], allow_extra_args=False, cwd="/tmp")
-        )
+        config = self._make_config(echo=dict(command=["echo", "hi"], allow_extra_args=False, cwd="/tmp"))
         handler = server._create_tool_handler("echo", config, str(tmp_path), "bridge.jsonl")
         await handler()
         entries = self._read_log(tmp_path)
@@ -1489,9 +1408,7 @@ class TestLogIntegration:
         import server
 
         self._reset_lock()
-        config = self._make_config(
-            echo=dict(command=["echo"], allow_extra_args=True, cwd="/tmp")
-        )
+        config = self._make_config(echo=dict(command=["echo"], allow_extra_args=True, cwd="/tmp"))
         handler = server._create_tool_handler("echo", config, str(tmp_path), "bridge.jsonl")
         with pytest.raises(Exception):
             await handler(args=["bad; arg"])
@@ -1510,12 +1427,8 @@ class TestLogIntegration:
         server._current_command = "other_cmd"
         await server._lock.acquire()
         try:
-            config = self._make_config(
-                echo=dict(command=["echo"], allow_extra_args=False, cwd="/tmp")
-            )
-            handler = server._create_tool_handler(
-                "echo", config, str(tmp_path), "bridge.jsonl"
-            )
+            config = self._make_config(echo=dict(command=["echo"], allow_extra_args=False, cwd="/tmp"))
+            handler = server._create_tool_handler("echo", config, str(tmp_path), "bridge.jsonl")
             with pytest.raises(Exception, match="busy"):
                 await handler()
         finally:
@@ -1533,9 +1446,7 @@ class TestLogIntegration:
 
         self._reset_lock()
         # Use python -c "pass" — interpreter startup guarantees duration > 1ms
-        config = self._make_config(
-            py=dict(command=["python", "-c", "pass"], allow_extra_args=False, cwd="/tmp")
-        )
+        config = self._make_config(py=dict(command=["python", "-c", "pass"], allow_extra_args=False, cwd="/tmp"))
         handler = server._create_tool_handler("py", config, str(tmp_path), "bridge.jsonl")
         await handler()
         entries = self._read_log(tmp_path)
@@ -1546,9 +1457,7 @@ class TestLogIntegration:
         import server
 
         self._reset_lock()
-        config = self._make_config(
-            echo=dict(command=["echo"], allow_extra_args=True, cwd="/tmp")
-        )
+        config = self._make_config(echo=dict(command=["echo"], allow_extra_args=True, cwd="/tmp"))
         handler = server._create_tool_handler("echo", config, str(tmp_path), "bridge.jsonl")
         with pytest.raises(Exception):
             await handler(args=["bad; arg"])

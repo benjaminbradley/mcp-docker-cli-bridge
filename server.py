@@ -512,8 +512,7 @@ def load_commands(path: str) -> CommandsConfig:
             data = json.load(f)
     except FileNotFoundError:
         print(
-            f"Error: commands file not found: {path}\n"
-            f"  Set BRIDGE_COMMANDS_FILE to override the default path",
+            f"Error: commands file not found: {path}\n  Set BRIDGE_COMMANDS_FILE to override the default path",
             file=sys.stderr,
         )
         sys.exit(1)
