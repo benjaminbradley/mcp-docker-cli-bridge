@@ -1,8 +1,12 @@
 # Build Plan — Phase 4: Output Filtering, Pipe Syntax, and Output Caching
 
-> **Status:** Planning
+> **Status:** Completed
 > **Created:** 2026-06-02
-> **References:** [Requirements](REQUIREMENTS.md) · [Architecture](ARCHITECTURE.md) · [Specs](SPECS.md) · [Phase 4 design conversation](../CHANGELOG.md)
+> **Completed:** 2026-06-02
+> **References:** [Requirements](../REQUIREMENTS.md) · [Architecture](../ARCHITECTURE.md) · [Specs](../SPECS.md)
+>
+> **Final test count:** 123 passing · lint clean · typecheck clean · format clean
+> **Key deviation from plan:** Task 4.7 used a FastMCP `lifespan=` context manager (`_cache_cleanup_lifespan`) instead of calling `asyncio.create_task()` directly in `main()`, because `create_task` requires a running event loop and `main()` is synchronous. Tests updated accordingly.
 
 Legend:
 
@@ -98,14 +102,14 @@ Updates to existing classes:
 
 **TDD:**
 
-- [ ] **RED:** In `TestCommandsConfig` (or a new `TestCommandResult` nested class), add:
+- [x] **RED:** In `TestCommandsConfig` (or a new `TestCommandResult` nested class), add:
   - `test_new_fields_default_to_none` — `CommandResult(stdout="", stderr="", exit_code=0)` constructs without error; `warnings`, `cache_id`, `cache_age_ms` are all `None`.
   - `test_warnings_field_serializes` — `CommandResult(..., warnings=["unsupported flag -i ignored"])` round-trips through `model_dump_json()` / `model_validate_json()` with the list intact.
   - `test_cache_fields_serialize` — `CommandResult(..., cache_id="abc", cache_age_ms=5000)` serializes both fields correctly.
   
   Confirm tests fail: `CommandResult` does not yet have the new fields.
 
-- [ ] **GREEN:** Add to `CommandResult` in `server.py`:
+- [x] **GREEN:** Add to `CommandResult` in `server.py`:
   ```python
   warnings: list[str] | None = None
   cache_id: str | None = None
@@ -113,7 +117,7 @@ Updates to existing classes:
   ```
   Run tests — all pass.
 
-- [ ] **REFACTOR:** Add `PipeOp` union type after `CommandResult`:
+- [x] **REFACTOR:** Add `PipeOp` union type after `CommandResult`:
   ```python
   @dataclass
   class StreamMergeOp: ...
@@ -140,9 +144,9 @@ Updates to existing classes:
   No tests needed for type definitions alone; types are exercised in 4.2.
 
 **Verification criteria:**
-- [ ] All existing tests still pass (`make test`)
-- [ ] `CommandResult(stdout="a", stderr="b", exit_code=0).model_dump_json()` produces `{"stdout":"a","stderr":"b","exit_code":0}` — no `warnings`/`cache_id`/`cache_age_ms` keys present. Achieved by calling `model_dump_json(exclude_none=True)` at the serialisation call site (`server.py:290`).
-- [ ] The call at `server.py:290` is updated from `result.model_dump_json()` to `result.model_dump_json(exclude_none=True)`
+- [x] All existing tests still pass (`make test`)
+- [x] `CommandResult(stdout="a", stderr="b", exit_code=0).model_dump_json()` produces `{"stdout":"a","stderr":"b","exit_code":0}` — no `warnings`/`cache_id`/`cache_age_ms` keys present. Achieved by calling `model_dump_json(exclude_none=True)` at the serialisation call site (`server.py:290`).
+- [x] The call at `server.py:290` is updated from `result.model_dump_json()` to `result.model_dump_json(exclude_none=True)`
 - **Files:** `server.py` (models section + line 290)
 
 ---
@@ -164,7 +168,7 @@ def parse_pipe(pipe_str: str) -> tuple[list[PipeOp], list[str]]:
 
 **TDD:**
 
-- [ ] **RED:** Add `TestParsePipe` class with tests:
+- [x] **RED:** Add `TestParsePipe` class with tests:
   - `test_empty_string_returns_no_ops` — `parse_pipe("")` → `([], [])`
   - `test_stream_merge` — `parse_pipe("2>&1")` → `([StreamMergeOp()], [])`
   - `test_grep_literal` — `parse_pipe('grep "FAIL"')` → `([GrepOp("FAIL", regex=False)], [])`
@@ -190,17 +194,17 @@ def parse_pipe(pipe_str: str) -> tuple[list[PipeOp], list[str]]:
   
   Confirm all fail: `parse_pipe` does not yet exist.
 
-- [ ] **GREEN:** Implement `parse_pipe()` in `server.py`. Approach:
+- [x] **GREEN:** Implement `parse_pipe()` in `server.py`. Approach:
   1. Split on ` | ` (with surrounding whitespace)
   2. For each segment, strip and match against the allowlist using a small hand-written token parser (no `re` for the pipe syntax itself — avoids recursion concerns)
   3. Collect warnings for unrecognised flags, raise `ValueError` for unrecognised command names
 
-- [ ] **REFACTOR:** Extract token-matching helpers if the function body exceeds ~50 lines. Keep `parse_pipe` as the single public entry point.
+- [x] **REFACTOR:** Extract token-matching helpers if the function body exceeds ~50 lines. Keep `parse_pipe` as the single public entry point.
 
 **Verification criteria:**
-- [ ] All `TestParsePipe` tests pass
-- [ ] `parse_pipe` never calls `subprocess`, `os.system`, `eval`, or `exec`
-- [ ] The function is a pure sync function with no side effects
+- [x] All `TestParsePipe` tests pass
+- [x] `parse_pipe` never calls `subprocess`, `os.system`, `eval`, or `exec`
+- [x] The function is a pure sync function with no side effects
 - **Files:** `server.py`, `tests/test_server.py`
 
 ---
@@ -224,7 +228,7 @@ async def apply_pipe(
 
 **TDD:**
 
-- [ ] **RED:** Add `TestApplyPipe` class:
+- [x] **RED:** Add `TestApplyPipe` class:
   - `test_no_ops_returns_unchanged` — empty ops → stdout and stderr unchanged
   - `test_stream_merge` — `StreamMergeOp` → stdout = stdout + stderr, stderr = `""`
   - `test_stream_merge_ordering` — merge happens before grep/head/tail when first in list
@@ -248,7 +252,7 @@ async def apply_pipe(
   
   Confirm all fail: `apply_pipe` does not exist.
 
-- [ ] **GREEN:** Implement `apply_pipe()`:
+- [x] **GREEN:** Implement `apply_pipe()`:
   - `StreamMergeOp`: `stdout = stdout + stderr; stderr = ""`
   - `GrepOp` (literal, no flags): `[l for l in lines if pattern in l]`
   - `GrepOp` (ignore_case): use `pattern.lower()` against `l.lower()` for matching; display original line
@@ -260,12 +264,12 @@ async def apply_pipe(
   - Preserve trailing newline: if original stdout ends with `\n` and result is non-empty, ensure result ends with `\n`
   - Context window ordering: `line_numbers` is applied after context expansion (numbers reflect position in original input, not in filtered output)
 
-- [ ] **REFACTOR:** Extract `_grep_sync(lines, pattern, regex, ignore_case, line_numbers, context_before, context_after) -> list[str]` as a single sync helper covering all grep modes (called via `to_thread` for regex; called directly for literal). This keeps the async path clean and the sync logic independently testable.
+- [x] **REFACTOR:** Extract `_grep_sync(lines, pattern, regex, ignore_case, line_numbers, context_before, context_after) -> list[str]` as a single sync helper covering all grep modes (called via `to_thread` for regex; called directly for literal). This keeps the async path clean and the sync logic independently testable.
 
 **Verification criteria:**
-- [ ] All `TestApplyPipe` tests pass, including the ReDoS timeout test
-- [ ] `apply_pipe` is `async`; it does not block the event loop on long regex
-- [ ] No `subprocess` calls; no shell execution
+- [x] All `TestApplyPipe` tests pass, including the ReDoS timeout test
+- [x] `apply_pipe` is `async`; it does not block the event loop on long regex
+- [x] No `subprocess` calls; no shell execution
 - **Files:** `server.py`, `tests/test_server.py`
 
 ---
@@ -304,7 +308,7 @@ def cleanup_stale_cache() -> int:
 
 **TDD:**
 
-- [ ] **RED:** Add `TestCacheSubsystem` class:
+- [x] **RED:** Add `TestCacheSubsystem` class:
   - `test_save_returns_uuid_string` — `save_cache("out", "err", 0)` returns a string matching `uuid4` format
   - `test_save_load_roundtrip` — save then load returns identical `stdout`, `stderr`, `exit_code`
   - `test_load_invalid_uuid_raises_value_error` — `load_cache("../../etc/passwd")` raises `ValueError`
@@ -317,17 +321,17 @@ def cleanup_stale_cache() -> int:
   
   Confirm all fail: `save_cache`, `load_cache`, `cleanup_stale_cache` do not exist.
 
-- [ ] **GREEN:** Implement the three functions. Key decisions:
+- [x] **GREEN:** Implement the three functions. Key decisions:
   - `save_cache`: `uuid.uuid4()`, create `_CACHE_DIR` if absent (`0o700`), write JSON via `json.dumps`, `os.chmod(path, 0o600)`
   - `load_cache`: validate UUID with `re.fullmatch(r'^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$', cache_id)`, check age vs `_CACHE_TTL_SECONDS`
   - `cleanup_stale_cache`: `Path(_CACHE_DIR).glob("*")`, `os.stat().st_mtime`, unlink if stale
 
-- [ ] **REFACTOR:** Extract `_validate_cache_id(cache_id)` if the format check is reused.
+- [x] **REFACTOR:** Extract `_validate_cache_id(cache_id)` if the format check is reused.
 
 **Verification criteria:**
-- [ ] All `TestCacheSubsystem` tests pass
-- [ ] A `cache_id` containing `..` or `/` never produces a file access outside `_CACHE_DIR`
-- [ ] Cache dir is only created when first needed (not at import time)
+- [x] All `TestCacheSubsystem` tests pass
+- [x] A `cache_id` containing `..` or `/` never produces a file access outside `_CACHE_DIR`
+- [x] Cache dir is only created when first needed (not at import time)
 - **Files:** `server.py`, `tests/test_server.py`
 
 ---
@@ -359,7 +363,7 @@ def cleanup_stale_cache() -> int:
 
 **TDD:**
 
-- [ ] **RED:** In `TestBuildTools`, add:
+- [x] **RED:** In `TestBuildTools`, add:
   - `test_pipe_param_in_schema` — every tool's `inputSchema.properties` contains `pipe` with `type: string`
   - `test_cache_param_in_schema` — every tool's `inputSchema.properties` contains `cache` with `type: boolean`
   - `test_cache_id_param_in_schema` — every tool's `inputSchema.properties` contains `cache_id` with `type: string`
@@ -372,14 +376,14 @@ def cleanup_stale_cache() -> int:
   
   Confirm new tests fail.
 
-- [ ] **GREEN:** Update `build_tools()` to include the three new schema properties in both schema branches. Update `handler_with_args` and `handler_no_args` signatures to accept `pipe: str | None = None`, `cache: bool = False`, `cache_id: str | None = None`, forwarding all three to `_run()`.
+- [x] **GREEN:** Update `build_tools()` to include the three new schema properties in both schema branches. Update `handler_with_args` and `handler_no_args` signatures to accept `pipe: str | None = None`, `cache: bool = False`, `cache_id: str | None = None`, forwarding all three to `_run()`.
 
-- [ ] **REFACTOR:** If the three new properties are repeated in both schema branches, extract a `_filter_schema_properties() -> dict` helper and merge.
+- [x] **REFACTOR:** If the three new properties are repeated in both schema branches, extract a `_filter_schema_properties() -> dict` helper and merge.
 
 **Verification criteria:**
-- [ ] All `TestBuildTools` tests pass, including new ones
-- [ ] All existing `TestToolHandlers` tests still pass (no regressions)
-- [ ] `handler_no_args` (no `allow_extra_args`) correctly accepts the three new params without exposing an `args` param
+- [x] All `TestBuildTools` tests pass, including new ones
+- [x] All existing `TestToolHandlers` tests still pass (no regressions)
+- [x] `handler_no_args` (no `allow_extra_args`) correctly accepts the three new params without exposing an `args` param
 - **Files:** `server.py`, `tests/test_server.py`
 
 ---
@@ -414,7 +418,7 @@ cache_id absent:
 
 **TDD:**
 
-- [ ] **RED:** Add `TestPipeIntegration` class (async, uses `_create_tool_handler` like `TestToolHandlers`):
+- [x] **RED:** Add `TestPipeIntegration` class (async, uses `_create_tool_handler` like `TestToolHandlers`):
   - `test_pipe_head_truncates_output` — command produces multi-line stdout; `pipe="head 2"` returns first 2 lines only
   - `test_pipe_grep_filters_lines` — command stdout has mixed lines; `grep "PASS"` returns only matching lines
   - `test_pipe_stream_merge` — command has both stdout and stderr; `2>&1` combines them into stdout
@@ -430,15 +434,15 @@ cache_id absent:
 
   Confirm all fail.
 
-- [ ] **GREEN:** Extend `_run()` signature to `async def _run(args, pipe=None, cache=False, cache_id=None)`. Implement both execution paths as documented above.
+- [x] **GREEN:** Extend `_run()` signature to `async def _run(args, pipe=None, cache=False, cache_id=None)`. Implement both execution paths as documented above.
 
-- [ ] **REFACTOR:** If `_run()` exceeds ~80 lines, extract `_run_from_cache()` and `_run_execute()` as private helpers. Keep lock acquisition/release exclusively in `_run_execute()`.
+- [x] **REFACTOR:** If `_run()` exceeds ~80 lines, extract `_run_from_cache()` and `_run_execute()` as private helpers. Keep lock acquisition/release exclusively in `_run_execute()`.
 
 **Verification criteria:**
-- [ ] All `TestPipeIntegration` tests pass
-- [ ] All pre-existing `TestToolHandlers` tests still pass (backward compat)
-- [ ] `cache_id` path never acquires `_lock` — verify via `TestPipeIntegration.test_cache_id_skips_execution` by asserting `_lock.locked()` is False throughout
-- [ ] `LogEntry` records cache_id usage if field is added; otherwise document why it was intentionally omitted
+- [x] All `TestPipeIntegration` tests pass
+- [x] All pre-existing `TestToolHandlers` tests still pass (backward compat)
+- [x] `cache_id` path never acquires `_lock` — verify via `TestPipeIntegration.test_cache_id_skips_execution` by asserting `_lock.locked()` is False throughout
+- [x] `LogEntry` records cache_id usage if field is added; otherwise document why it was intentionally omitted
 - **Files:** `server.py`, `tests/test_server.py`
 
 ---
@@ -459,22 +463,22 @@ async def _cache_cleanup_loop(interval_seconds: int = 3600) -> None:
 
 **TDD:**
 
-- [ ] **RED:** Add tests in `TestCacheSubsystem` (or a new `TestCacheCleanupLoop`):
+- [x] **RED:** Add tests in `TestCacheSubsystem` (or a new `TestCacheCleanupLoop`):
   - `test_cleanup_loop_calls_cleanup` — mock `cleanup_stale_cache`; run `_cache_cleanup_loop` for two ticks with a very short interval; assert it was called at least twice
   - `test_cleanup_loop_swallows_exceptions` — `cleanup_stale_cache` raises; loop continues without propagating the exception
   - `test_main_starts_cleanup_task` — mock `mcp.run` so it returns immediately; assert `_cache_cleanup_loop` was scheduled as a task (check `asyncio.all_tasks()` or mock `asyncio.create_task`)
   
   Confirm tests fail.
 
-- [ ] **GREEN:** Implement `_cache_cleanup_loop()`. In `main()`, add `asyncio.create_task(_cache_cleanup_loop())` before `mcp.run(...)`.
+- [x] **GREEN:** Implement `_cache_cleanup_loop()`. In `main()`, add `asyncio.create_task(_cache_cleanup_loop())` before `mcp.run(...)`.
 
-- [ ] **REFACTOR:** N/A — function is small by design.
+- [x] **REFACTOR:** N/A — function is small by design.
 
 **Verification criteria:**
-- [ ] All three new cleanup-loop tests pass
-- [ ] `make test` — full suite passes
-- [ ] `make lint` and `make typecheck` pass with no new errors
-- [ ] `_cache_cleanup_loop` is a top-level function (not nested in `main`) so it is independently testable
+- [x] All three new cleanup-loop tests pass
+- [x] `make test` — full suite passes
+- [x] `make lint` and `make typecheck` pass with no new errors
+- [x] `_cache_cleanup_loop` is a top-level function (not nested in `main`) so it is independently testable
 - **Files:** `server.py`, `tests/test_server.py`
 
 ---
@@ -483,9 +487,9 @@ async def _cache_cleanup_loop(interval_seconds: int = 3600) -> None:
 
 Run before opening Phase 4 PR:
 
-- [ ] `make test` — all tests pass (count should grow by ~55-65 new tests)
-- [ ] `make lint` — no ruff errors
-- [ ] `make typecheck` — no mypy errors
-- [ ] Backward compatibility: a tool call with no `pipe`/`cache`/`cache_id` returns the same JSON shape as Phase 3
-- [ ] SPECS.md §1.3 and §6.1 updated to reflect new `CommandResult` fields and new tool schema parameters
-- [ ] CHANGELOG.md entry added
+- [x] `make test` — all tests pass (count should grow by ~55-65 new tests)
+- [x] `make lint` — no ruff errors
+- [x] `make typecheck` — no mypy errors
+- [x] Backward compatibility: a tool call with no `pipe`/`cache`/`cache_id` returns the same JSON shape as Phase 3
+- [x] SPECS.md §1.3 and §6.1 updated to reflect new `CommandResult` fields and new tool schema parameters
+- [x] CHANGELOG.md entry added

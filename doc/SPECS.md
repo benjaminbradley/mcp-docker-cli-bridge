@@ -1,7 +1,7 @@
 # Specifications — MCP Docker CLI Bridge
 
 > **Status:** Approved
-> **Last updated:** 2026-04-01
+> **Last updated:** 2026-06-02
 > **References:** [Requirements](REQUIREMENTS.md) · [Architecture](ARCHITECTURE.md) · [ADR 001](adr/001-mcp-transport.md) · [ADR 002](adr/002-pydantic-models.md)
 
 ---
@@ -38,6 +38,18 @@ Example response (for a whitelist with three commands):
             "type": "array",
             "items": {"type": "string"},
             "description": "Additional arguments appended to the command"
+          },
+          "pipe": {
+            "type": "string",
+            "description": "Filter output: 2>&1 | grep [-EinABC] 'pat' | head/tail N. Example: \"2>&1 | grep -iA 5 'FAILED' | tail 100\""
+          },
+          "cache": {
+            "type": "boolean",
+            "description": "Cache full output; returns cache_id for reuse"
+          },
+          "cache_id": {
+            "type": "string",
+            "description": "UUID from prior result — skips re-execution, applies pipe to cached output"
           }
         }
       }
@@ -47,7 +59,20 @@ Example response (for a whitelist with three commands):
       "description": "Execute: python -m ruff check src/",
       "inputSchema": {
         "type": "object",
-        "properties": {}
+        "properties": {
+          "pipe": {
+            "type": "string",
+            "description": "Filter output: 2>&1 | grep [-EinABC] 'pat' | head/tail N. Example: \"2>&1 | grep -iA 5 'FAILED' | tail 100\""
+          },
+          "cache": {
+            "type": "boolean",
+            "description": "Cache full output; returns cache_id for reuse"
+          },
+          "cache_id": {
+            "type": "string",
+            "description": "UUID from prior result — skips re-execution, applies pipe to cached output"
+          }
+        }
       }
     },
     {
@@ -55,7 +80,20 @@ Example response (for a whitelist with three commands):
       "description": "Execute: python -m mypy src/",
       "inputSchema": {
         "type": "object",
-        "properties": {}
+        "properties": {
+          "pipe": {
+            "type": "string",
+            "description": "Filter output: 2>&1 | grep [-EinABC] 'pat' | head/tail N. Example: \"2>&1 | grep -iA 5 'FAILED' | tail 100\""
+          },
+          "cache": {
+            "type": "boolean",
+            "description": "Cache full output; returns cache_id for reuse"
+          },
+          "cache_id": {
+            "type": "string",
+            "description": "UUID from prior result — skips re-execution, applies pipe to cached output"
+          }
+        }
       }
     }
   ]
@@ -64,7 +102,8 @@ Example response (for a whitelist with three commands):
 
 Key behaviors:
 - Commands with `allow_extra_args: true` include an `args` property in the schema.
-- Commands with `allow_extra_args: false` have an empty `properties` object — no `args` parameter is exposed.
+- Commands with `allow_extra_args: false` have no `args` parameter — only `pipe`, `cache`, and `cache_id` are exposed.
+- `pipe`, `cache`, and `cache_id` are present in every tool's schema regardless of `allow_extra_args`.
 - The `description` is auto-generated from the executable prefix: `"Execute: "` + the command array joined by spaces.
 
 ### 1.3 Tool Invocation (tools/call)
@@ -75,6 +114,18 @@ Key behaviors:
   "name": "run_tests",
   "arguments": {
     "args": ["--tb=short", "-x"]
+  }
+}
+```
+
+Optional filtering and caching parameters may also be supplied:
+```json
+{
+  "name": "run_tests",
+  "arguments": {
+    "args": ["--tb=short"],
+    "pipe": "2>&1 | grep -E 'FAILED|ERROR' | head 50",
+    "cache": true
   }
 }
 ```
@@ -91,6 +142,19 @@ Key behaviors:
   "isError": false
 }
 ```
+
+When `pipe` or `cache` parameters are used, the `CommandResult` JSON may include additional fields:
+```json
+{
+  "stdout": "FAILED test_foo.py::test_bar\nERROR test_baz.py::test_qux\n",
+  "stderr": "",
+  "exit_code": 1,
+  "warnings": ["grep: flag -v not supported, ignored"],
+  "cache_id": "550e8400-e29b-41d4-a716-446655440000"
+}
+```
+
+Fields `warnings`, `cache_id`, and `cache_age_ms` are omitted from the JSON entirely when `None` (serialized with `exclude_none=True`), so a plain call with no `pipe`/`cache` returns the same three-field shape as before.
 
 The `text` field contains a `CommandResult` model serialized to JSON (see §6.1). Non-zero exit codes still produce `isError: false` — the bridge faithfully reports what the subprocess returned.
 
@@ -333,6 +397,9 @@ class CommandResult(BaseModel):
     stdout: str
     stderr: str
     exit_code: int
+    warnings: list[str] | None = None   # unsupported pipe flags; omitted when None
+    cache_id: str | None = None          # present when cache=True was requested
+    cache_age_ms: int | None = None      # present when cache_id was provided
 
 
 class LogEntry(BaseModel):

@@ -36,6 +36,8 @@ The bridge runs inside your application's Docker container during development. I
 
 - **MCP native** — Allow-listed commands appear as MCP tools with typed schemas. Claude Code discovers and calls them automatically.
 - **Security-first** — Named command recipes with a read-only allow-list config. `subprocess.run` with `shell=False`. Schema-enforced constraints prevent unauthorized arguments.
+- **Output filtering** — Every tool accepts an optional `pipe` parameter: a safe subset of Unix pipe syntax (`2>&1 | grep [-EinABC] 'pat' | head/tail N`) parsed and applied by the bridge, never passed to a shell.
+- **Result caching** — Pass `cache: true` to store full output and get a `cache_id` back. Re-filter the same output with a different `pipe` using only `cache_id`, without re-running the command.
 - **Dev-only** — Multi-stage Dockerfile integration keeps the bridge out of production images.
 - **Reusable** — Project-agnostic. Configure the command allow-list for any CLI-based project.
 
@@ -331,6 +333,8 @@ Every tool invocation is logged to `bridge.jsonl` with full request/response pay
   "rejection_reason": null
 }
 ```
+
+The log always captures the full, unfiltered output — even when a `pipe` filter was applied to the MCP response. This means the audit log is always complete regardless of what the caller requested.
 
 The log directory is volume-mounted from the host, so logs persist across container rebuilds.
 
