@@ -6,8 +6,6 @@ services:
     build:
       context: ..       # project root — Dockerfile lives there
       target: dev
-    ports:
-      - "127.0.0.1:7357:7357"
     entrypoint: ["python", "/workspace/server.py"]
     volumes:
       - ./commands.dev.json:/bridge/commands.json:ro
