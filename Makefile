@@ -4,13 +4,12 @@
 COMPOSE := docker compose -f dev/docker-compose.yml
 SANDBOX_NETWORK ?= bridge-dev
 
-# Supply-chain cooldown: pip refuses to install packages uploaded more recently than this.
-# Propagated to compose builds, throwaway lock containers, and the Dockerfile ARG default.
-# See doc/SECURITY.md for the full list of locations that must stay in sync.
-PIP_UPLOADED_PRIOR_TO ?= P3D
+# Supply-chain cooldown window. See doc/SECURITY.md §6.
+COOLDOWN_DAYS ?= 3
+PIP_UPLOADED_PRIOR_TO ?= P$(COOLDOWN_DAYS)D
 export PIP_UPLOADED_PRIOR_TO
 
-.PHONY: help build up down logs test lint typecheck format format-check validate shell install-hooks connect lock lock-upgrade
+.PHONY: help build up down logs test lint typecheck format format-check validate shell install-hooks connect lock lock-upgrade audit
 
 ## help: show this help message
 help:
@@ -63,19 +62,31 @@ shell:
 lock:
 	docker run --rm \
 	  -e PIP_UPLOADED_PRIOR_TO=$(PIP_UPLOADED_PRIOR_TO) \
-	  -v $(CURDIR):/w -w /w python:3.12-slim sh -c "\
-	  pip install --no-cache-dir pip-tools >/dev/null && \
-	  pip-compile --quiet --strip-extras requirements.in && \
-	  pip-compile --quiet --strip-extras requirements-dev.in"
+	  -e COOLDOWN_DAYS=$(COOLDOWN_DAYS) \
+	  -v $(CURDIR):/w -w /w python:3.12-slim sh -c '\
+	    pip install --no-cache-dir uv >/dev/null && \
+	    CUTOFF=$$(date -u -d "$$COOLDOWN_DAYS days ago" +%Y-%m-%dT%H:%M:%SZ) && \
+	    uv pip compile --quiet --exclude-newer=$$CUTOFF -o requirements.txt requirements.in && \
+	    uv pip compile --quiet --exclude-newer=$$CUTOFF -o requirements-dev.txt requirements-dev.in'
 
 ## lock-upgrade: recompile requirements*.txt, upgrading pinned versions to the latest allowed by the .in constraints
 lock-upgrade:
 	docker run --rm \
 	  -e PIP_UPLOADED_PRIOR_TO=$(PIP_UPLOADED_PRIOR_TO) \
+	  -e COOLDOWN_DAYS=$(COOLDOWN_DAYS) \
+	  -v $(CURDIR):/w -w /w python:3.12-slim sh -c '\
+	    pip install --no-cache-dir uv >/dev/null && \
+	    CUTOFF=$$(date -u -d "$$COOLDOWN_DAYS days ago" +%Y-%m-%dT%H:%M:%SZ) && \
+	    uv pip compile --quiet --upgrade --exclude-newer=$$CUTOFF -o requirements.txt requirements.in && \
+	    uv pip compile --quiet --upgrade --exclude-newer=$$CUTOFF -o requirements-dev.txt requirements-dev.in'
+
+## audit: scan locked requirements for known vulnerabilities (matches the CI audit job; non-zero on any vuln)
+audit:
+	docker run --rm \
+	  -e PIP_UPLOADED_PRIOR_TO=$(PIP_UPLOADED_PRIOR_TO) \
 	  -v $(CURDIR):/w -w /w python:3.12-slim sh -c "\
-	  pip install --no-cache-dir pip-tools >/dev/null && \
-	  pip-compile --quiet --strip-extras --upgrade requirements.in && \
-	  pip-compile --quiet --strip-extras --upgrade requirements-dev.in"
+	  pip install --no-cache-dir pip-audit >/dev/null && \
+	  pip-audit -r requirements.txt -r requirements-dev.txt"
 
 ## install-hooks: install git hooks for bridge development
 install-hooks:

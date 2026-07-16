@@ -7,8 +7,7 @@ services:
       context: ..       # project root — Dockerfile lives there
       target: dev
       args:
-        # Supply-chain cooldown for pip. Sourced from Makefile (which exports it)
-        # or the shell env; defaults to P3D if unset. See doc/SECURITY.md.
+        # See doc/SECURITY.md §6.
         PIP_UPLOADED_PRIOR_TO: ${PIP_UPLOADED_PRIOR_TO:-P3D}
     entrypoint: ["python", "/workspace/server.py"]
     volumes:

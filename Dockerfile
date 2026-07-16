@@ -1,8 +1,6 @@
 FROM python:3.12-slim AS base
 
-# Supply-chain cooldown for pip: refuse packages uploaded more recently than this.
-# Baked into ENV so both build-time RUN pip install and any runtime pip calls inherit it.
-# Overridable at build time via --build-arg PIP_UPLOADED_PRIOR_TO=... (see Makefile).
+# Supply-chain cooldown window (see doc/SECURITY.md §6).
 ARG PIP_UPLOADED_PRIOR_TO=P3D
 ENV PIP_UPLOADED_PRIOR_TO=${PIP_UPLOADED_PRIOR_TO}
 

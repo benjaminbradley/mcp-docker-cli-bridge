@@ -208,44 +208,56 @@ In addition to everything in Profile 2, this allows Claude Code to pass arbitrar
 
 ## 6. Supply-Chain: Package Upload Cooldown
 
-To reduce exposure to compromised package releases (typosquats, hijacked maintainer accounts, malicious minor bumps), every pip invocation in this repo runs with `PIP_UPLOADED_PRIOR_TO` set. Pip refuses to consider any package uploaded to the index more recently than the configured window, giving the ecosystem time to notice and yank a bad release before we install it.
+To reduce exposure to compromised package releases (typosquats, hijacked maintainer accounts, malicious minor bumps), every dependency resolution and install in this repo rejects packages uploaded more recently than a fixed window. That gives the ecosystem time to notice and yank a bad release before we consume it.
+
+The window is enforced at **two independent chokepoints**:
+
+- **Lock time** (`make lock` / `make lock-upgrade`) — `uv pip compile --exclude-newer=<cutoff>` prunes too-new candidate versions from the resolver's search space, so the lock file never pins a package inside the cooldown.
+- **Install time** (Dockerfile, compose, CI) — `pip` honors `PIP_UPLOADED_PRIOR_TO`, refusing to install anything too new even if a lock somehow contained it.
+
+Lock-time is the primary defense; install-time is a safety net that also protects against ad-hoc `pip install` calls that skip the lock.
+
+> Historical note: an earlier version of this pipeline used `pip-tools` (`pip-compile`) for lock generation. `pip-tools` does **not** honor `PIP_UPLOADED_PRIOR_TO`, so lock files were pinned to whatever was latest, and install-time pip would then refuse those pins — a silent failure of the intended guarantee. The switch to `uv pip compile` closed that gap because uv respects `--exclude-newer` during resolution.
 
 ### 6.1 Value and source of truth
 
-The default is `P3D` (packages must have been on the index for at least 3 days). It's set once as a Makefile variable and propagated everywhere:
+The default is a 3-day window. `COOLDOWN_DAYS` is the single source of truth; `PIP_UPLOADED_PRIOR_TO` is derived from it (as `P<N>D`, an ISO 8601 duration) and the uv cutoff timestamp is computed from it inside the lock container (as `date -u -d "<N> days ago"`, so both forms always agree).
 
 ```make
 # Makefile
-PIP_UPLOADED_PRIOR_TO ?= P3D
+COOLDOWN_DAYS ?= 3
+PIP_UPLOADED_PRIOR_TO ?= P$(COOLDOWN_DAYS)D
 export PIP_UPLOADED_PRIOR_TO
 ```
 
-Override for a one-off run with `PIP_UPLOADED_PRIOR_TO=P7D make lock`, or by exporting the shell env var before running `docker compose` / CI.
+Override for a one-off run with `COOLDOWN_DAYS=7 make lock`, or by exporting the shell env vars before running `docker compose` / CI.
 
 ### 6.2 Where the value must be honored
 
-Every pip invocation across dev, lock generation, CI, and release builds must see this variable. Missing any one of them leaves a hole in the cooldown.
+Every dependency-resolving and package-installing step across dev, lock generation, CI, and release builds must apply the cooldown. Missing any one of them leaves a hole.
 
 | Location | Kind | How the value gets there |
 |---|---|---|
-| `Makefile` | Source of truth | `PIP_UPLOADED_PRIOR_TO ?= P3D` (top of file) |
-| `Dockerfile` base stage | Build ARG + ENV | `ARG PIP_UPLOADED_PRIOR_TO=P3D` → `ENV`. Applies to `RUN pip install -r requirements.txt` and inherited by dev stage |
+| `Makefile` | Source of truth | `COOLDOWN_DAYS ?= 3` → derives `PIP_UPLOADED_PRIOR_TO = P3D` |
+| `Makefile` `lock` / `lock-upgrade` | `docker run -e` + `uv pip compile --exclude-newer` | Passes `COOLDOWN_DAYS` into the throwaway `python:3.12-slim` container; the container converts it to an absolute RFC 3339 cutoff and passes it to `uv` |
+| `Dockerfile` base stage | Build `ARG` + `ENV` | `ARG PIP_UPLOADED_PRIOR_TO=P3D` → `ENV`. Applies to `RUN pip install -r requirements.txt` and inherited by dev stage |
 | `dev/docker-compose.yml` | Build args | `build.args.PIP_UPLOADED_PRIOR_TO: ${PIP_UPLOADED_PRIOR_TO:-P3D}` — reads exported Makefile var, defaults to P3D |
-| `Makefile` `lock` / `lock-upgrade` | `docker run -e` | Passes `PIP_UPLOADED_PRIOR_TO` into the throwaway `python:3.12-slim` container where `pip-compile` runs |
-| `.github/workflows/ci.yml` | Workflow-level `env:` | Both `validate` (host pip) and `docker-validate` (compose build → args expansion) inherit |
+| `.github/workflows/ci.yml` | Workflow-level `env:` | Both `validate` (host pip), `docker-validate` (compose build → args expansion), and `audit` (pip-audit's install phase) inherit |
 | `.github/workflows/publish.yml` | Dockerfile ARG default | Uses `docker/build-push-action` with no explicit build-arg; falls back to the `ARG PIP_UPLOADED_PRIOR_TO=P3D` default in the Dockerfile |
 
-### 6.3 Why the lock step is load-bearing
+### 6.3 Why lock-time enforcement is load-bearing
 
-`make lock` runs `pip-compile` to generate `requirements.txt` and `requirements-dev.txt`. If that step runs *without* the cooldown, `pip-compile` will happily pin a package uploaded yesterday. Every subsequent `pip install -r requirements.txt` then honors that pin — cooldown or no cooldown — because the requirement is now an exact version, not a range. **The cooldown on install-time pip calls is a safety net; the cooldown on lock generation is where the actual protection lives.**
+Lock files pin exact versions. Once `foo==1.2.3` is in `requirements.txt`, every downstream install goes to that version regardless of whether the cooldown blocks it or not — you either install what's pinned, or fail. The cooldown at install time is a fail-closed safety net; the cooldown at lock time is what prevents the failure from occurring in normal operation.
+
+Concretely: if `make lock` pins a package uploaded 2 hours ago, then a fresh `docker build` or `pip-audit` run against that lock will fail with `No matching distribution found` — the pin exists, but the cooldown rejects installing it. Users then either wait N days or bypass the cooldown, both of which defeat the purpose. Lock-time enforcement (`uv --exclude-newer`) prevents this by ensuring only cooled-off versions can be pinned in the first place.
 
 ### 6.4 Changing the default
 
-To change the window (e.g., P3D → P7D):
+To change the window (e.g., 3 days → 7 days):
 
-1. Edit the default in `Makefile` (`PIP_UPLOADED_PRIOR_TO ?= …`).
-2. Update the Dockerfile ARG default and the `${…:-P3D}` fallback in `dev/docker-compose.yml` so direct invocations (not going through Make) still get the new default.
-3. Update the workflow-level `env:` in `.github/workflows/ci.yml`.
+1. Edit `COOLDOWN_DAYS` in `Makefile`.
+2. Update the `ARG PIP_UPLOADED_PRIOR_TO=P3D` default in `Dockerfile` and the `${…:-P3D}` fallback in `dev/docker-compose.yml` so direct (non-Make) invocations still get the new default.
+3. Update the workflow-level `env: PIP_UPLOADED_PRIOR_TO: P3D` in `.github/workflows/ci.yml`.
 4. Run `make lock-upgrade` and commit the resulting lock diff — this reflects the new cooldown in the pinned versions.
 5. Rebuild (`make down && make build && make up && make connect`).
 

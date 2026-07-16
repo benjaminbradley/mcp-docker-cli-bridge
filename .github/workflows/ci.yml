@@ -6,10 +6,7 @@ on:
   pull_request:
     branches: [main]
 
-# Supply-chain cooldown: pip refuses packages uploaded more recently than this.
-# Inherited by both jobs — the host-Python `pip install` step reads it directly,
-# and `docker compose build` picks it up via the build.args ${PIP_UPLOADED_PRIOR_TO}
-# expansion in dev/docker-compose.yml. Keep in sync with the Makefile default.
+# Supply-chain cooldown window (see doc/SECURITY.md §6).
 env:
   PIP_UPLOADED_PRIOR_TO: P3D
 
@@ -20,9 +17,9 @@ jobs:
   validate:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5  # v4.3.1
 
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065  # v5.6.0
         with:
           python-version: "3.12"
 
@@ -40,7 +37,7 @@ jobs:
   docker-validate:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5  # v4.3.1
 
       - name: Build dev image
         run: docker compose -f dev/docker-compose.yml build
@@ -56,3 +53,13 @@ jobs:
              python -m ruff check server.py && \
              python -m mypy server.py && \
              python -m pytest tests/ -v"
+
+  # See CONTRIBUTING.md § Handling a pip-audit failure.
+  audit:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5  # v4.3.1
+
+      - uses: pypa/gh-action-pip-audit@1220774d901786e6f652ae159f7b6bc8fea6d266  # v1.1.0
+        with:
+          inputs: requirements.txt requirements-dev.txt
