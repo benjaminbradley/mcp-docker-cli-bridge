@@ -310,18 +310,13 @@ After `make down && make up` cycles (without a devcontainer rebuild), this step 
 
 ### 9. Verify connectivity
 
-From inside the devcontainer, ask the bridge to list its tools:
+From inside the devcontainer, make a simple request to the endpoint:
 
 ```bash
-curl -s http://my-app:7357/mcp \
-  -H "Content-Type: application/json" \
-  -H "Accept: application/json, text/event-stream" \
-  -d '{"jsonrpc":"2.0","id":1,"method":"tools/list","params":{}}'
+curl http://my-app:7357/mcp
 ```
 
-You should see a JSON-RPC response listing every command in your allow-list. For an interactive UI, run `npx @modelcontextprotocol/inspector http://my-app:7357/mcp` and browse the tool schemas in your browser.
-
-A bare `curl http://my-app:7357/mcp` (GET with no body) will return an HTTP error — the MCP endpoint is POST-only.
+You should see a JSON-RPC response beginning with `{"jsonrpc":` - it will probably be an error, but this JSON response indicates the connection IS WORKING and Claude Code should be able to connect to the MCP. A timeout or network error indicates the connection is not working.
 
 ## Configuration Reference
 
