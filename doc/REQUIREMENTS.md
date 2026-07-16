@@ -180,7 +180,7 @@ The host project may install a pre-commit hook that uses the bridge to run check
 
 The host project must maintain a development guide (`doc/DEVELOPMENT.md`) that covers:
 
-- Prerequisites for the dev workflow (Docker, the bridge network, the bridge project as a sibling dependency).
+- Prerequisites for the dev workflow (Docker, the bridge network; the bridge itself is pulled from the published `ghcr.io/benjaminbradley/mcp-docker-cli-bridge` image at build time — no local checkout required).
 - Starting and stopping the dev environment.
 - How the bridge works and what commands are available.
 - Pre-commit hook setup.
@@ -192,8 +192,8 @@ The host project must maintain a development guide (`doc/DEVELOPMENT.md`) that c
 
 The bridge must be fully removable from a host project without modifying any application source code.
 
-- **Bridge server code** lives outside the application's source tree (e.g., in a separate project directory, not inside `src/`).
-- **Dockerfile integration** uses a multi-stage build. The production stage does not include the bridge. The dev stage extends the production stage with the bridge layer.
+- **Bridge server code** is pulled from the published `ghcr.io/benjaminbradley/mcp-docker-cli-bridge` image at build time — the host project never checks bridge source into its own tree.
+- **Dockerfile integration** uses a multi-stage build. The production stage does not include the bridge. A `dev-with-bridge` stage extends the host's dev image and copies the bridge server in from a `FROM ghcr.io/…` stage; this stage is only built when the dev compose override selects it.
 - **Compose integration** uses a separate override file (e.g., `docker-compose.dev.yml`). Removing the override file restores the original ephemeral-container behavior.
 - **MCP registration** is a standalone config file (`.mcp.json`) or a CLI registration (`claude mcp remove`). Removing it deregisters the bridge from the Controller.
 - **Allowlist config** is a standalone file mounted into the container, not part of the application's configuration.
@@ -206,7 +206,7 @@ The bridge must be fully removable from a host project without modifying any app
 The bridge must be usable across multiple CLI-based Docker projects without modification to the bridge code itself.
 
 - Each host project provides its own `commands.json` allowlist.
-- Each host project provides its own Dockerfile dev stage and compose override that reference the shared bridge server file.
+- Each host project provides its own Dockerfile stage and compose override that reference the published bridge image via `FROM ghcr.io/benjaminbradley/mcp-docker-cli-bridge:<tag> AS bridge`.
 - The bridge server is a single Python file that depends on the MCP Python SDK and Python stdlib. Dependencies are declared in a `requirements.txt` shipped alongside the server.
 - The bridge makes no assumptions about the application's language, framework, or tooling — it executes arbitrary (allowlisted) CLI commands.
 

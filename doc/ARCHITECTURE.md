@@ -1,7 +1,7 @@
 # Architecture — MCP Docker CLI Bridge
 
 > **Status:** Approved
-> **Last updated:** 2026-04-01
+> **Last updated:** 2026-07-16
 > **References:** [ADR 001 — MCP Transport](adr/001-mcp-transport.md) · [ADR 002 — Pydantic Models](adr/002-pydantic-models.md)
 
 ---
@@ -135,7 +135,7 @@ Error paths short-circuit at the relevant step: busy at step 0, unknown command 
 
 ### 4.1 Multi-stage Dockerfile (in host project)
 
-The bridge integrates into the host project's Dockerfile as an additional build stage. The bridge server file and its dependencies are copied from the sibling project directory at build time.
+The bridge integrates into the host project's Dockerfile as an additional build stage. The bridge server file and its dependencies are pulled from the published `ghcr.io/benjaminbradley/mcp-docker-cli-bridge` image at build time — no local checkout of the bridge repo is required on the host.
 
 ```
 FROM python:3.x AS base
@@ -143,17 +143,23 @@ FROM python:3.x AS base
 
 FROM base AS dev
 # ... dev dependencies (pytest, ruff, mypy) ...
-COPY bridge/server.py /bridge/server.py
-COPY bridge/requirements.txt /bridge/requirements.txt
+
+FROM ghcr.io/benjaminbradley/mcp-docker-cli-bridge:latest AS bridge
+
+FROM dev AS dev-with-bridge
+COPY --from=bridge /bridge/server.py /bridge/server.py
+COPY --from=bridge /bridge/requirements.txt /bridge/requirements.txt
 RUN pip install --no-cache-dir -r /bridge/requirements.txt
-CMD ["python", "/bridge/server.py"]
+ENTRYPOINT ["python", "/bridge/server.py"]
 ```
 
-The `base` stage is the production image. The `dev` stage extends it. The bridge file and its MCP SDK dependencies never appear in production builds.
+The `base` stage is the production image. The `dev` stage extends it with dev tooling. The `dev-with-bridge` stage extends `dev` and layers in the bridge server. The bridge file and its MCP SDK dependencies never appear in production builds because `dev-with-bridge` is only built when the dev compose override selects it.
+
+A local-checkout alternative is available (via Docker's `additional_contexts` feature) for developing against an unpublished version of the bridge; see the README's Step 3 for details.
 
 ### 4.2 Compose Override (in host project)
 
-The host project provides a `docker-compose.dev.yml` that targets the `dev` stage of the Dockerfile, keeps the container running (bridge server as entrypoint), mounts the commands allowlist read-only, mounts the log directory read-write, attaches to the external bridge network, and exposes port 7357 on the bridge network only (no host port binding).
+The host project provides a `docker-compose.dev.yml` that targets the `dev-with-bridge` stage of the Dockerfile, keeps the container running (bridge server as entrypoint), mounts the commands allowlist read-only, mounts the log directory read-write, attaches to the external bridge network, and exposes port 7357 on the bridge network only (no host port binding).
 
 The base `docker-compose.yml` is unchanged. The dev override is additive.
 
@@ -169,38 +175,35 @@ The Controller (Claude Code) is configured to connect to the bridge as an MCP se
 
 ## 5. Integration Model
 
-The bridge project is a **sibling directory dependency** — it lives alongside consumer projects on the host filesystem, not inside them.
+The bridge is distributed as a **published Docker image** on GitHub Container Registry (`ghcr.io/benjaminbradley/mcp-docker-cli-bridge`). Consumer projects reference it via a named `FROM` stage in their Dockerfile — nothing from the bridge repo needs to be present on the consumer's host filesystem.
 
 ```
-parent/
-├── mcp-docker-cli-bridge/       # This project (shared tool)
-│   ├── server.py                # The bridge MCP server
-│   ├── requirements.txt         # MCP SDK + dependencies
-│   ├── README.md
-│   └── doc/
-│       ├── REQUIREMENTS.md
-│       ├── ARCHITECTURE.md
-│       ├── SPECS.md
-│       ├── TODO.md
-│       └── adr/
-│           ├── 001-mcp-transport.md
-│           └── 002-pydantic-models.md
-│
-├── example-app/                 # Consumer project
-│   ├── commands.json            # Project-specific allowlist
-│   ├── .mcp.json                # MCP registration for CC
-│   ├── docker-compose.dev.yml   # Dev override referencing bridge
-│   ├── doc/DEVELOPMENT.md       # Documents bridge dependency
-│   └── ...
-│
-└── other-project/               # Another consumer
-    ├── commands.json
-    ├── .mcp.json
-    ├── docker-compose.dev.yml
-    └── ...
+Consumer host filesystem                     GitHub Container Registry
+────────────────────────                     ────────────────────────
+
+example-app/                                 ghcr.io/benjaminbradley/
+├── Dockerfile                               mcp-docker-cli-bridge
+│   ├── FROM base AS dev                       ├── :latest
+│   └── FROM ghcr.io/…/mcp-docker-cli- ────────┤   (server.py +
+│         bridge:<tag> AS bridge               │    requirements.txt
+│                                              │    at /bridge/)
+├── commands.json          # allowlist         ├── :v0.1.0
+├── .mcp.json              # MCP registration  │
+├── docker-compose.dev.yml # dev overlay       └── :v0.1
+└── .devcontainer/init-firewall.sh
+                           # firewall rules
+
+other-project/
+├── Dockerfile             # same FROM ghcr.io/… reference
+├── commands.json
+└── ...
 ```
 
-Each consumer provides: `commands.json` (allowlist, mounted read-only), `docker-compose.dev.yml` (dev overlay), a Dockerfile `dev` stage, `.mcp.json` (MCP registration), and documentation (`doc/DEVELOPMENT.md`). Optionally: a pre-commit hook and Makefile dual-mode targets.
+Each consumer provides: `commands.json` (allowlist, mounted read-only), `docker-compose.dev.yml` (dev overlay), a Dockerfile `dev-with-bridge` stage that layers the bridge onto the consumer's existing dev image, `.mcp.json` (MCP registration), and `.devcontainer/init-firewall.sh` rules that scope the devcontainer's egress to the bridge subnet and port. Optionally: a pre-commit hook and Makefile targets that invoke bridge tools.
+
+Version selection is per-consumer via the tag in the `FROM` line — `latest` for the most recent release, or `vX.Y.Z` / `vX.Y` for a pinned build. See the README's Published Image and Quick Start sections for the operator-facing details.
+
+For contributors developing against an unpublished version of the bridge itself, Docker's `additional_contexts` feature can substitute a local checkout for the registry image without changing the Dockerfile's `COPY --from=bridge` lines. See the README's Step 3 `<details>` block for the recipe.
 
 ---
 
