@@ -1,0 +1,5 @@
+# Runtime dependencies (loose constraints).
+# Do not install this file directly — install the compiled requirements.txt instead.
+# Recompile after editing:  make lock
+mcp>=1.1.0
+pydantic>=2.0

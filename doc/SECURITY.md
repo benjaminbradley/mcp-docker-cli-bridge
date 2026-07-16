@@ -206,7 +206,64 @@ In addition to everything in Profile 2, this allows Claude Code to pass arbitrar
 
 ---
 
-## 6. Known Limitations and Non-Mitigations
+## 6. Supply-Chain: Package Upload Cooldown
+
+To reduce exposure to compromised package releases (typosquats, hijacked maintainer accounts, malicious minor bumps), every pip invocation in this repo runs with `PIP_UPLOADED_PRIOR_TO` set. Pip refuses to consider any package uploaded to the index more recently than the configured window, giving the ecosystem time to notice and yank a bad release before we install it.
+
+### 6.1 Value and source of truth
+
+The default is `P3D` (packages must have been on the index for at least 3 days). It's set once as a Makefile variable and propagated everywhere:
+
+```make
+# Makefile
+PIP_UPLOADED_PRIOR_TO ?= P3D
+export PIP_UPLOADED_PRIOR_TO
+```
+
+Override for a one-off run with `PIP_UPLOADED_PRIOR_TO=P7D make lock`, or by exporting the shell env var before running `docker compose` / CI.
+
+### 6.2 Where the value must be honored
+
+Every pip invocation across dev, lock generation, CI, and release builds must see this variable. Missing any one of them leaves a hole in the cooldown.
+
+| Location | Kind | How the value gets there |
+|---|---|---|
+| `Makefile` | Source of truth | `PIP_UPLOADED_PRIOR_TO ?= P3D` (top of file) |
+| `Dockerfile` base stage | Build ARG + ENV | `ARG PIP_UPLOADED_PRIOR_TO=P3D` → `ENV`. Applies to `RUN pip install -r requirements.txt` and inherited by dev stage |
+| `dev/docker-compose.yml` | Build args | `build.args.PIP_UPLOADED_PRIOR_TO: ${PIP_UPLOADED_PRIOR_TO:-P3D}` — reads exported Makefile var, defaults to P3D |
+| `Makefile` `lock` / `lock-upgrade` | `docker run -e` | Passes `PIP_UPLOADED_PRIOR_TO` into the throwaway `python:3.12-slim` container where `pip-compile` runs |
+| `.github/workflows/ci.yml` | Workflow-level `env:` | Both `validate` (host pip) and `docker-validate` (compose build → args expansion) inherit |
+| `.github/workflows/publish.yml` | Dockerfile ARG default | Uses `docker/build-push-action` with no explicit build-arg; falls back to the `ARG PIP_UPLOADED_PRIOR_TO=P3D` default in the Dockerfile |
+
+### 6.3 Why the lock step is load-bearing
+
+`make lock` runs `pip-compile` to generate `requirements.txt` and `requirements-dev.txt`. If that step runs *without* the cooldown, `pip-compile` will happily pin a package uploaded yesterday. Every subsequent `pip install -r requirements.txt` then honors that pin — cooldown or no cooldown — because the requirement is now an exact version, not a range. **The cooldown on install-time pip calls is a safety net; the cooldown on lock generation is where the actual protection lives.**
+
+### 6.4 Changing the default
+
+To change the window (e.g., P3D → P7D):
+
+1. Edit the default in `Makefile` (`PIP_UPLOADED_PRIOR_TO ?= …`).
+2. Update the Dockerfile ARG default and the `${…:-P3D}` fallback in `dev/docker-compose.yml` so direct invocations (not going through Make) still get the new default.
+3. Update the workflow-level `env:` in `.github/workflows/ci.yml`.
+4. Run `make lock-upgrade` and commit the resulting lock diff — this reflects the new cooldown in the pinned versions.
+5. Rebuild (`make down && make build && make up && make connect`).
+
+### 6.5 Threat coverage
+
+| Attack | Mitigated? |
+|---|---|
+| Newly-published malicious minor version of a direct dep | Yes, as long as the window exceeds detection time |
+| Newly-published malicious minor version of a transitive dep | Yes, same |
+| Typosquat that has been on the index for months | No — cooldown is time-based, not reputation-based |
+| Compromised existing version (retroactive) | No — pip doesn't re-check older uploads |
+| Compromise of the index itself | No — cooldown is a client-side filter over what the index returns |
+
+Cooldown is one control in depth. It composes with (does not replace) pinned versions, lock files, and — for stronger guarantees — hash pinning (`pip-compile --generate-hashes`), which this repo does not currently use.
+
+---
+
+## 7. Known Limitations and Non-Mitigations
 
 **No authentication on the MCP endpoint.** Any container on the bridge subnet can call any tool. Authentication would require token management but is not implemented. Mitigation: network isolation via firewall.
 

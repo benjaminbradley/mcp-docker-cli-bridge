@@ -1,0 +1,13 @@
+# Development dependencies (loose constraints): test, lint, typecheck, lock tooling.
+# Do not install this file directly — install the compiled requirements-dev.txt instead.
+# Recompile after editing:  make lock
+#
+# The -c line pins dev-side transitive deps to the same versions already locked
+# for runtime, so dev and prod agree on shared packages (e.g. pydantic).
+-c requirements.txt
+
+pytest
+pytest-asyncio
+ruff
+mypy
+pip-tools

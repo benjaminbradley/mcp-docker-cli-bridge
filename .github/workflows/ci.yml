@@ -6,6 +6,13 @@ on:
   pull_request:
     branches: [main]
 
+# Supply-chain cooldown: pip refuses packages uploaded more recently than this.
+# Inherited by both jobs — the host-Python `pip install` step reads it directly,
+# and `docker compose build` picks it up via the build.args ${PIP_UPLOADED_PRIOR_TO}
+# expansion in dev/docker-compose.yml. Keep in sync with the Makefile default.
+env:
+  PIP_UPLOADED_PRIOR_TO: P3D
+
 jobs:
   # Fast host-Python job: type check + unit tests without Docker build overhead.
   # Format and lint run exclusively in docker-validate, which uses the same ruff
@@ -20,7 +27,7 @@ jobs:
           python-version: "3.12"
 
       - name: Install dependencies
-        run: pip install -r requirements.txt pytest pytest-asyncio mypy
+        run: pip install -r requirements.txt -r requirements-dev.txt
 
       - name: Type check
         run: python -m mypy server.py
