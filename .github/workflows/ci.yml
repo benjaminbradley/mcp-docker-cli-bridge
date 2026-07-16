@@ -38,6 +38,9 @@ jobs:
       - name: Build dev image
         run: docker compose -f dev/docker-compose.yml build
 
+      - name: Prepare workspace for container user
+        run: sudo chown -R 1000:1000 .
+
       - name: Validate inside container
         run: |
           docker compose -f dev/docker-compose.yml run --rm --entrypoint "" my-app sh -c \
