@@ -41,7 +41,8 @@ jobs:
       - name: Validate inside container
         run: |
           docker compose -f dev/docker-compose.yml run --rm --entrypoint "" my-app sh -c \
-            "python -m ruff format --check server.py && \
+            "cd /workspace && \
+             python -m ruff format --check server.py && \
              python -m ruff check server.py && \
              python -m mypy server.py && \
              python -m pytest tests/ -v"
