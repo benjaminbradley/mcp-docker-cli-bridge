@@ -481,7 +481,7 @@ Your Makefile targets revert to `docker compose run --rm` behavior automatically
 
 **Working on the bridge itself?** See [CONTRIBUTING.md](CONTRIBUTING.md) for repo layout, dev commands, dependency locking, and a description of the CI/CD pipeline that scans, builds, and publishes this project.
 
-## Documentation
+## Original Build Documentation
 
 - [Requirements](doc/REQUIREMENTS.md) — Functional requirements
 - [Architecture](doc/ARCHITECTURE.md) — System design, deployment topology, integration model
