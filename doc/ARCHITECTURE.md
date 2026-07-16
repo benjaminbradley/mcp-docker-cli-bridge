@@ -19,22 +19,22 @@ The bridge is a single-process MCP server that exposes allowlisted CLI commands 
 │  │ (Claude Code)        │       │                              │ │
 │  │                      │       │  ┌────────────────────────┐  │ │
 │  │  MCP Client ─────────┼──────▶│  │ Bridge MCP Server      │  │ │
-│  │  (tools/list,        │  Docker│  │ (:7357/mcp)            │  │ │
-│  │   tools/call)        │  bridge│  │                        │  │ │
-│  │                      │network │  │  Allowlist   Executor  │  │ │
+│  │  (tools/list,        │ Docker│  │ (:7357/mcp)            │  │ │
+│  │   tools/call)        │ bridge│  │                        │  │ │
+│  │                      │network│  │  Allowlist   Executor  │  │ │
 │  │  Volume: /app/src ───┼───────┼──│  Loader      ─────────▶│──┼─┤ subprocess.run
-│  │  (shared source)     │       │  │               Validator │  │ │ (shell=False)
-│  │                      │       │  │               Logger    │  │ │
+│  │  (shared source)     │       │  │               Validator│  │ │ (shell=False)
+│  │                      │       │  │               Logger   │  │ │
 │  └──────────────────────┘       │  └────────────────────────┘  │ │
-│                                  │                              │ │
-│                                  │  Application code + dev tools│ │
-│                                  │  (pytest, ruff, mypy, etc.)  │ │
-│                                  └──────────────────────────────┘ │
+│                                 │                              │ │
+│                                 │  Application code + dev tools│ │
+│                                 │  (pytest, ruff, mypy, etc.)  │ │
+│                                 └──────────────────────────────┘ │
 │                                                                  │
 │  Volumes:                                                        │
 │    ./src/              → /app/src/          (source code, rw)    │
 │    ./commands.json     → /bridge/commands.json (allowlist, ro)   │
-│    ./data/bridge-logs/ → /bridge/logs/      (JSONL audit, rw)   │
+│    ./data/bridge-logs/ → /bridge/logs/      (JSONL audit, rw)    │
 │                                                                  │
 │  External network:                                               │
 │    <project-bridge-net>  (created once, shared, not compose-     │
@@ -107,7 +107,7 @@ Controller (CC)                   Bridge MCP Server                subprocess
     │                                  │     (non-blocking; if busy    │
     │                                  │      → reject immediately)    │
     │                                  │  1. Look up "run_tests"       │
-    │                                  │     in allowlist               │
+    │                                  │     in allowlist              │
     │                                  │  2. Validate args             │
     │                                  │  3. Build argv:               │
     │                                  │     ["python","-m","pytest",  │
@@ -115,13 +115,13 @@ Controller (CC)                   Bridge MCP Server                subprocess
     │                                  │  4. subprocess.run(argv,      │
     │                                  │     shell=False, cwd="/app",  │
     │                                  │     timeout=120)              │
-    │                                  │─────────────────────────────▶│
+    │                                  │──────────────────────────-───▶│
     │                                  │                               │
-    │                                  │  stdout, stderr, returncode  │
-    │                                  │◀─────────────────────────────│
-    │                                  │  5. Log full result (JSONL)  │
-    │                                  │  6. Release concurrency lock │
-    │                                  │  7. Return tool result       │
+    │                                  │  stdout, stderr, returncode   │
+    │                                  │◀───────────────────────────-──│
+    │                                  │  5. Log full result (JSONL)   │
+    │                                  │  6. Release concurrency lock  │
+    │                                  │  7. Return tool result        │
     │  content: [{text: JSON of        │                               │
     │    stdout, stderr, exit_code}]   │                               │
     │◀─────────────────────────────────│                               │
