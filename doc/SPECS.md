@@ -517,21 +517,25 @@ These specs define what a host project must provide to use the bridge. The bridg
 
 ### 8.1 Dockerfile Dev Stage
 
-The host project's Dockerfile adds a `dev` stage that extends the production image:
+The host project's Dockerfile pulls the bridge from a named `FROM` stage and adds a `dev-with-bridge` stage that layers the bridge onto the host's existing dev image:
 
 ```dockerfile
 FROM base AS dev
 # Install dev dependencies (pytest, ruff, mypy, etc.)
 RUN pip install -e ".[dev]"
-# Copy bridge server and install its dependencies
-COPY bridge/server.py /bridge/server.py
-COPY bridge/requirements.txt /bridge/requirements.txt
+
+# Pull the bridge from ghcr.io (pin to a specific tag for reproducible builds)
+FROM ghcr.io/benjaminbradley/mcp-docker-cli-bridge:latest AS bridge
+
+FROM dev AS dev-with-bridge
+COPY --from=bridge /bridge/server.py /bridge/server.py
+COPY --from=bridge /bridge/requirements.txt /bridge/requirements.txt
 RUN pip install --no-cache-dir -r /bridge/requirements.txt
 # Default: start bridge server
-CMD ["python", "/bridge/server.py"]
+ENTRYPOINT ["python", "/bridge/server.py"]
 ```
 
-The bridge files are included in the Docker build context via the compose override's `build.additional_contexts` configuration.
+The bridge image is fetched from the registry at build time — no local checkout of the bridge repo required. A local-checkout alternative (via Docker's `additional_contexts` feature) is available for developing against an unpublished version of the bridge; see the README's Step 3 for details.
 
 ### 8.2 Compose Dev Override (docker-compose.dev.yml)
 
@@ -539,9 +543,8 @@ The bridge files are included in the Docker build context via the compose overri
 services:
   app:
     build:
-      target: dev
-      additional_contexts:
-        bridge: ../mcp-docker-cli-bridge
+      target: dev-with-bridge
+    entrypoint: ["python", "/bridge/server.py"]
     volumes:
       - ./src:/app/src
       - ./commands.json:/bridge/commands.json:ro
@@ -557,6 +560,8 @@ networks:
     external: true
     name: ${BRIDGE_NETWORK:-dev-bridge}
 ```
+
+The `entrypoint:` on the service is required in addition to the `ENTRYPOINT` in the Dockerfile — if the base `docker-compose.yml` sets a different entrypoint for the app service, the Dockerfile's is silently ignored without this override.
 
 ### 8.3 MCP Registration (.mcp.json)
 
