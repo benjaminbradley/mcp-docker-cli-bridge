@@ -61,7 +61,7 @@ Before starting, confirm your environment matches:
 
 - **Claude Code running inside a devcontainer.** This bridge is designed for the devcontainer topology described above. See the [Claude Code devcontainer setup guide](https://code.claude.com/docs/en/devcontainer) if you haven't set one up yet.
 - **Docker and Docker Compose** on the host machine.
-- **An existing multi-stage Dockerfile for your app** with a stage that already installs the dev tools your allow-list will invoke (`pytest`, `ruff`, `mypy`, etc.). If you don't have such a stage today, you'll need to add one before Step 3.
+- **An existing multi-stage Dockerfile for your app** with a stage that already installs the dev tools your allow-list will invoke (e.g. `pytest`, `ruff`, etc for a python project). If you don't have such a stage today, you'll need to add one before Step 3.
 - Permission to modify your project's `Dockerfile`, `docker-compose*.yml`, and `.devcontainer/init-firewall.sh`.
 
 ## Published Image
@@ -99,7 +99,7 @@ A /29 gives 8 addresses: the network address, the broadcast address, one gateway
 
 ### 2. Define your command allow-list
 
-Create `commands.json` in your project root:
+Create `commands.json` in your project root. This is a **sample file with tooling for a python project**. Define your allow-list based on the specific needs of your project.
 
 ```json
 {
@@ -136,6 +136,7 @@ Create `commands.json` in your project root:
 ```
 
 Each command defines:
+
 - `command` — the executable and its fixed arguments (passed as a list, never through a shell)
 - `allow_extra_args` — whether the caller can append arguments (e.g., `--tb=short` for pytest). When `false`, the tool schema doesn't expose an args parameter at all.
 - `cwd` — working directory inside the container
@@ -143,7 +144,7 @@ Each command defines:
 
 ### 3. Add the bridge to your Dockerfile
 
-Add a new stage that extends your existing **dev image** — the one that already has the tools your allow-list invokes (`pytest`, `ruff`, `mypy`, etc.) installed. The bridge itself is pulled from ghcr.io as a named `FROM` stage:
+Add a new stage that extends your existing **dev image** — the one that already has the tools your allow-list invokes installed. The bridge itself is pulled from ghcr.io as a named `FROM` stage:
 
 ```dockerfile
 # Pull the bridge image (pin to a version tag)
@@ -169,6 +170,7 @@ The `bridge` stage fetches from the registry at build time — no local clone of
 If you want to develop against an unpublished version or pin to local source, use Docker's `additional_contexts` feature instead of a registry reference.
 
 `Dockerfile`:
+
 ```dockerfile
 FROM dev AS dev-with-bridge
 # COPY --from=bridge pulls from the named context in docker-compose.dev.yml
@@ -181,6 +183,7 @@ ENTRYPOINT ["python", "/bridge/server.py"]
 ```
 
 `docker-compose.dev.yml` (add `additional_contexts` to the build section):
+
 ```yaml
 services:
   my-app:
@@ -203,7 +206,6 @@ services:
   my-app:
     build:
       target: dev-with-bridge
-      # No additional_contexts needed — bridge image referenced directly in Dockerfile
     # Explicitly set entrypoint here as well as in the Dockerfile.
     # Compose file entrypoint values take precedence over Dockerfile ENTRYPOINT
     # instructions, so if your base docker-compose.yml sets entrypoint: for this
@@ -287,13 +289,7 @@ iptables -A OUTPUT -d "$BRIDGE_SUBNET" -p tcp --dport "$BRIDGE_PORT" -j ACCEPT
 
 The subnet and port values must match step 1 and your `BRIDGE_PORT` environment variable (default: `7357`).
 
-After updating the firewall script, **rebuild the devcontainer** (VS Code: `Dev Containers: Rebuild Container`) to apply the change. Until then, you can apply the rules manually in the current session:
-
-```bash
-sudo iptables -A OUTPUT -d W.X.Y.1 -j REJECT --reject-with icmp-host-prohibited
-sudo iptables -A INPUT  -s W.X.Y.1 -j REJECT --reject-with icmp-host-prohibited
-sudo iptables -A OUTPUT -d W.X.Y.0/29 -p tcp --dport 7357 -j ACCEPT
-```
+After updating the firewall script, **rebuild the devcontainer** (VS Code: `Dev Containers: Rebuild Container`) to apply the change.
 
 ### 8. Connect the devcontainer to the bridge network
 
@@ -316,7 +312,7 @@ From inside the devcontainer, make a simple request to the endpoint:
 curl http://my-app:7357/mcp
 ```
 
-You should see a JSON-RPC response beginning with `{"jsonrpc":` - it will probably be an error, but this JSON response indicates the connection IS WORKING and Claude Code should be able to connect to the MCP. A timeout or network error indicates the connection is not working.
+You should see a JSON-RPC response beginning with `{"jsonrpc":` - it will probably be an error, but this JSON response indicates the connection IS WORKING and Claude Code should be able to connect to the MCP. A timeout or network error indicates the connection is not working and the containers still need to be added to the docker network.
 
 ## Configuration Reference
 
@@ -441,7 +437,7 @@ Each project that uses the bridge needs its own /29. A simple scheme — increme
 
 | Project | Network name | Subnet |
 |---|---|---|
-| find-work-bot | `fwb-dev-bridge-net` | `172.22.0.0/29` |
+| my-project | `myproj-dev-bridge-net` | `172.22.0.0/29` |
 | my-api | `api-dev-bridge-net` | `172.22.0.8/29` |
 | my-frontend | `fe-dev-bridge-net` | `172.22.0.16/29` |
 | … | … | … |

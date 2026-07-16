@@ -158,6 +158,7 @@ The bridge server has no knowledge of or dependency on the application's runtime
 ### 7.1 Host Project Makefile
 
 The host project's Makefile must support dual-mode operation:
+
 - **Dev container running:** Makefile targets detect the running container and use `docker compose exec` to run commands directly (bypassing the bridge). This is the path for human operators.
 - **No dev container running:** Makefile targets fall back to `docker compose run --rm` (ephemeral container, original behavior).
 
@@ -170,6 +171,7 @@ The host project must provide an MCP server configuration (e.g., `.mcp.json` at 
 ### 7.3 Pre-commit Hook
 
 The host project may install a pre-commit hook that uses the bridge to run checks before committing. The hook:
+
 - Sends tool call requests to the bridge for each check (lint, typecheck, tests).
 - Fails the commit if any check returns a non-zero exit code.
 - Provides a clear error message if the bridge is unreachable, directing the operator to start the dev container.
@@ -177,6 +179,7 @@ The host project may install a pre-commit hook that uses the bridge to run check
 ### 7.4 Host Project Documentation
 
 The host project must maintain a development guide (`doc/DEVELOPMENT.md`) that covers:
+
 - Prerequisites for the dev workflow (Docker, the bridge network, the bridge project as a sibling dependency).
 - Starting and stopping the dev environment.
 - How the bridge works and what commands are available.
