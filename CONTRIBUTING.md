@@ -17,6 +17,8 @@
 
 ## Getting Started
 
+External contributors: fork the repository on GitHub first, then clone your fork and open pull requests from a topic branch.
+
 ```bash
 git clone https://github.com/your-username/mcp-docker-cli-bridge.git
 cd mcp-docker-cli-bridge
@@ -113,6 +115,25 @@ make install-hooks
 This copies `dev/hooks/pre-commit` to `.git/hooks/pre-commit`. Remove it with `rm .git/hooks/pre-commit`.
 
 The hook is written in Node.js because the bridge dev environment uses a Node-based devcontainer. If your setup doesn't have Node, the same checks are available via `make validate`. Alternatively, reimplement the hook in any language — the underlying MCP-over-HTTP protocol is language-agnostic (see the comment at the top of `dev/hooks/pre-commit`).
+
+## CI/CD Pipeline
+
+The project uses two GitHub Actions workflows in `.github/workflows/`:
+
+### `ci.yml` — runs on every push to `main` and every PR
+
+- **`docker-validate` job** — Builds the dev Docker image (`docker compose -f dev/docker-compose.yml build`), then runs `ruff format --check`, `ruff check`, `mypy`, and `pytest` inside the container. This is the canonical validation environment because it uses the same tool versions as the published image. Locally reproducible with `make validate`.
+- **`audit` job** — Runs [`pip-audit`](https://pypi.org/project/pip-audit/) against `requirements.txt` and `requirements-dev.txt` via the `pypa/gh-action-pip-audit` action, failing on any known CVE in either lock file. Locally reproducible with `make audit`. See [Handling a pip-audit failure](#handling-a-pip-audit-failure).
+
+Both jobs inherit the supply-chain cooldown window (`PIP_UPLOADED_PRIOR_TO: P3D`) at the workflow level — see [`doc/SECURITY.md §6`](doc/SECURITY.md) for the rationale.
+
+### `publish.yml` — runs when a `v*` tag is pushed
+
+Builds the `base` Docker stage and pushes it to `ghcr.io/${{ github.repository }}` with three tags derived from the git tag: `vX.Y.Z`, `vX.Y`, and `latest`. See [Releases](#releases) for how to trigger it. `make build` produces the same image contents locally (without the push).
+
+### Dependabot
+
+`.github/dependabot.yml` schedules monthly PRs that bump pinned GitHub Actions SHAs and refresh the trailing `# vX.Y.Z` comment. Review each Dependabot PR the same way as a human-authored one: read the release notes, skim the SHA-diff link, then merge.
 
 ## CI: Third-Party GitHub Actions
 

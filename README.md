@@ -2,7 +2,23 @@
 
 An MCP (Model Context Protocol) server that gives AI development agents secure, controlled access to CLI commands inside a Docker container.
 
-## When Is This Useful?
+## Contents
+
+- [What This Is](#what-this-is)
+- [Key Properties](#key-properties)
+- [Prerequisites](#prerequisites)
+- [Published Image](#published-image)
+- [Quick Start](#quick-start)
+- [Configuration Reference](#configuration-reference)
+- [Logging](#logging)
+- [Security](#security)
+- [Choosing a Subnet](#choosing-a-subnet)
+- [Removal](#removal)
+- [Contributing](#contributing)
+- [Documentation](#documentation)
+- [License](#license)
+
+## What This Is
 
 This project is designed for a specific development topology:
 
@@ -10,7 +26,7 @@ This project is designed for a specific development topology:
 - **Your application** runs in a separate Docker container, managed by `docker compose`.
 - **Claude Code needs to run commands inside the app container** — tests, linters, type checkers — but cannot use `docker exec` (no socket) and should not be given unrestricted shell access.
 
-The bridge solves this by running a small MCP HTTP server inside the app container. Claude Code calls it like any other MCP tool, and the bridge executes only the specific commands you explicitly allow.
+The bridge solves this by running a small MCP HTTP server inside the app container alongside your application. It reads a `commands.json` allow-list that you define, and exposes each allow-listed command as an MCP tool over Streamable HTTP. Claude Code discovers those tools automatically and calls them like any other MCP tool.
 
 ```
 ┌──────────────────────────────┐     ┌──────────────────────────────┐
@@ -28,10 +44,6 @@ The bridge solves this by running a small MCP HTTP server inside the app contain
 
 Both containers communicate over a dedicated Docker bridge network. Claude Code never touches the Docker daemon, and the app container never exposes anything beyond the allow-listed commands.
 
-## How It Works
-
-The bridge runs inside your application's Docker container during development. It reads a `commands.json` allow-list that you define, and exposes each command as an MCP tool over Streamable HTTP. Claude Code discovers the tools automatically and calls them like any other MCP tool.
-
 ## Key Properties
 
 - **MCP native** — Allow-listed commands appear as MCP tools with typed schemas. Claude Code discovers and calls them automatically.
@@ -42,6 +54,15 @@ The bridge runs inside your application's Docker container during development. I
 - **Reusable** — Project-agnostic. Configure the command allow-list for any CLI-based project.
 
 See [SECURITY.md](doc/SECURITY.md) for a full threat model analysis and security implications for different usage scenarios.
+
+## Prerequisites
+
+Before starting, confirm your environment matches:
+
+- **Claude Code running inside a devcontainer.** This bridge is designed for the devcontainer topology described above. See the [Claude Code devcontainer setup guide](https://code.claude.com/docs/en/devcontainer) if you haven't set one up yet.
+- **Docker and Docker Compose** on the host machine.
+- **An existing multi-stage Dockerfile for your app** with a stage that already installs the dev tools your allow-list will invoke (`pytest`, `ruff`, `mypy`, etc.). If you don't have such a stage today, you'll need to add one before Step 3.
+- Permission to modify your project's `Dockerfile`, `docker-compose*.yml`, and `.devcontainer/init-firewall.sh`.
 
 ## Published Image
 
@@ -55,7 +76,7 @@ Use `latest` for the most recent release, or pin to a specific semver tag (`v0.1
 
 ## Quick Start
 
-Replace all `my-*` placeholders with names specific to your project.
+Replace all `my-*` placeholders with names specific to your project. Pick your names before you start and substitute them consistently through every step.
 
 | Placeholder | Meaning | Example |
 |---|---|---|
@@ -122,13 +143,13 @@ Each command defines:
 
 ### 3. Add the bridge to your Dockerfile
 
-Add a `dev` stage that extends your production image. The bridge image is pulled from ghcr.io as a named `FROM` stage:
+Add a new stage that extends your existing **dev image** — the one that already has the tools your allow-list invokes (`pytest`, `ruff`, `mypy`, etc.) installed. The bridge itself is pulled from ghcr.io as a named `FROM` stage:
 
 ```dockerfile
 # Pull the bridge image (pin to a version tag)
 FROM ghcr.io/benjaminbradley/mcp-docker-cli-bridge:latest AS bridge
 
-FROM base AS dev
+FROM dev AS dev-with-bridge
 COPY --from=bridge /bridge/server.py /bridge/server.py
 COPY --from=bridge /bridge/requirements.txt /bridge/requirements.txt
 RUN pip install --no-cache-dir -r /bridge/requirements.txt \
@@ -137,6 +158,8 @@ RUN pip install --no-cache-dir -r /bridge/requirements.txt \
 # Override app entrypoint — this container runs the bridge, not the app
 ENTRYPOINT ["python", "/bridge/server.py"]
 ```
+
+> **The container that runs the bridge must have every tool your `commands.json` references.** In the example above, `FROM dev AS dev-with-bridge` assumes your Dockerfile already has a `dev` stage where `pytest`, `ruff`, `mypy`, etc. are installed. If your dev tools live in a differently-named stage, substitute that stage name. If they aren't installed in any stage yet, add them first — otherwise the bridge will report `command not found` when Claude Code calls a tool.
 
 The `bridge` stage fetches from the registry at build time — no local clone of this repo required. Replace `latest` with a specific tag (`v0.1.0`) if you need a reproducible build.
 
@@ -147,7 +170,7 @@ If you want to develop against an unpublished version or pin to local source, us
 
 `Dockerfile`:
 ```dockerfile
-FROM base AS dev
+FROM dev AS dev-with-bridge
 # COPY --from=bridge pulls from the named context in docker-compose.dev.yml
 COPY --from=bridge server.py /bridge/server.py
 COPY --from=bridge requirements.txt /bridge/requirements.txt
@@ -162,7 +185,7 @@ ENTRYPOINT ["python", "/bridge/server.py"]
 services:
   my-app:
     build:
-      target: dev
+      target: dev-with-bridge
       additional_contexts:
         bridge: ../mcp-docker-cli-bridge   # path to local bridge checkout
 ```
@@ -179,7 +202,7 @@ services:
 services:
   my-app:
     build:
-      target: dev
+      target: dev-with-bridge
       # No additional_contexts needed — bridge image referenced directly in Dockerfile
     # Explicitly set entrypoint here as well as in the Dockerfile.
     # Compose file entrypoint values take precedence over Dockerfile ENTRYPOINT
@@ -287,11 +310,18 @@ After `make down && make up` cycles (without a devcontainer rebuild), this step 
 
 ### 9. Verify connectivity
 
-From inside the devcontainer:
+From inside the devcontainer, ask the bridge to list its tools:
 
 ```bash
-curl http://my-app:7357/mcp
+curl -s http://my-app:7357/mcp \
+  -H "Content-Type: application/json" \
+  -H "Accept: application/json, text/event-stream" \
+  -d '{"jsonrpc":"2.0","id":1,"method":"tools/list","params":{}}'
 ```
+
+You should see a JSON-RPC response listing every command in your allow-list. For an interactive UI, run `npx @modelcontextprotocol/inspector http://my-app:7357/mcp` and browse the tool schemas in your browser.
+
+A bare `curl http://my-app:7357/mcp` (GET with no body) will return an HTTP error — the MCP endpoint is POST-only.
 
 ## Configuration Reference
 
@@ -339,52 +369,6 @@ Every tool invocation is logged to `bridge.jsonl` with full request/response pay
 The log always captures the full, unfiltered output — even when a `pipe` filter was applied to the MCP response. This means the audit log is always complete regardless of what the caller requested.
 
 The log directory is volume-mounted from the host, so logs persist across container rebuilds.
-
-## Development
-
-Requires Docker. All commands are in the Makefile:
-
-```bash
-make help          # list available targets
-make build         # build the dev image
-make up            # start the bridge server
-make down          # stop the bridge server
-make logs          # tail server logs
-make test          # run unit tests inside the container
-make lint          # ruff check
-make typecheck     # mypy
-make format        # ruff format
-make shell         # open a shell in the container
-```
-
-The bridge self-hosts for its own development: `.mcp.json` registers the bridge at `http://my-app:7357/mcp` so Claude Code can call `echo_test`, `run_tests`, `run_lint`, `run_typecheck`, `run_format_check`, `run_format_fix`, and `sleep_test` as tools for e2e verification. Follow the Quick Start steps above using the bridge project's own `dev/commands.dev.json` and `dev/docker-compose.yml`.
-
-See [CONTRIBUTING.md](CONTRIBUTING.md) for setup instructions and contributor workflow.
-
-### Pre-commit hook
-
-`hooks/pre-commit` is a reference implementation of a pre-commit hook that calls bridge MCP tools to run all checks before each commit. It is written in Node.js because the bridge dev environment uses a Node-based devcontainer.
-
-The MCP-over-HTTP protocol it demonstrates is language-agnostic:
-1. `POST /mcp` → `initialize` → receive `mcp-session-id` header
-2. `POST /mcp` (with session header) → `notifications/initialized`
-3. `POST /mcp` (with session header) → `tools/call` → parse SSE response
-
-Consumer projects should adapt this pattern in whatever language their host environment provides. The script lives at `dev/hooks/pre-commit`. Install for bridge development with `make install-hooks`.
-
-## Removal
-
-To remove the bridge from a project, delete these files — no application source code changes needed:
-
-1. `commands.json`
-2. `.mcp.json` (or `claude mcp remove my-app-bridge`)
-3. `docker-compose.dev.yml`
-4. The `dev` stage from your Dockerfile
-5. Bridge references from `doc/DEVELOPMENT.md`
-6. `data/bridge-logs/` (optional, log data)
-7. The bridge subnet block from `.devcontainer/init-firewall.sh`
-
-Your Makefile targets revert to `docker compose run --rm` behavior automatically.
 
 ## Security
 
@@ -487,6 +471,24 @@ docker network inspect my-app-dev-bridge-net \
 ```
 
 The gateway shown will be `W.X.Y.1` — this is the address to block in the firewall script (step 7 of Quick Start).
+
+## Removal
+
+To remove the bridge from a project, delete these files — no application source code changes needed:
+
+1. `commands.json`
+2. `.mcp.json` (or `claude mcp remove my-app-bridge`)
+3. `docker-compose.dev.yml`
+4. The `dev-with-bridge` stage from your Dockerfile
+5. Any references to the bridge in your project docs
+6. `data/bridge-logs/` (optional, log data)
+7. The bridge subnet block from `.devcontainer/init-firewall.sh`
+
+Your Makefile targets revert to `docker compose run --rm` behavior automatically.
+
+## Contributing
+
+**Working on the bridge itself?** See [CONTRIBUTING.md](CONTRIBUTING.md) for repo layout, dev commands, dependency locking, and a description of the CI/CD pipeline that scans, builds, and publishes this project.
 
 ## Documentation
 
