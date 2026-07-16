@@ -13,7 +13,7 @@ A review of an external requirements document suggested adopting FastAPI for rou
 
 ## Decision
 
-Adopt pydantic for the bridge's internal data models since it is already installed as a transitive dependency of the MCP SDK. Replace manual dict validation with pydantic models for: whitelist configuration, log entries, tool result payloads, and server configuration.
+Adopt pydantic for the bridge's internal data models since it is already installed as a transitive dependency of the MCP SDK. Replace manual dict validation with pydantic models for: allowlist configuration, log entries, tool result payloads, and server configuration.
 
 Do not add FastAPI, shlex, or any other new dependencies beyond what the MCP SDK already provides.
 

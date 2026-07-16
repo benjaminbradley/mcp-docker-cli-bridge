@@ -20,7 +20,7 @@ The bridge provides a **controlled, audited path** from the devcontainer to spec
 | Without bridge | With bridge |
 |---|---|
 | Human pastes output manually | Claude Code calls tools autonomously |
-| Or: grant Docker socket (= host root) | Named command whitelist only |
+| Or: grant Docker socket (= host root) | Named command allowlist only |
 | No audit trail | Every call logged to JSONL |
 | No isolation | Firewall limits Claude Code to port 7357 only |
 
@@ -34,10 +34,10 @@ The bridge provides a **controlled, audited path** from the devcontainer to spec
 `subprocess.run(shell=False)` + metacharacter blocklist means Claude Code cannot break out of argv into a shell. An argument like `--flag; rm -rf /` is rejected at validation; even if it were not, it would be passed as a single literal string to the subprocess, not interpreted as shell syntax.
 
 **Expanding the command surface at runtime.**  
-`commands.json` is mounted read-only (`:ro`). There is no API to register new commands, change the whitelist, or modify timeouts at runtime. The set of callable tools is fixed when the container starts.
+`commands.json` is mounted read-only (`:ro`). There is no API to register new commands, change the allowlist, or modify timeouts at runtime. The set of callable tools is fixed when the container starts.
 
 **Calling arbitrary executables.**  
-The bridge performs a whitelist lookup before execution. Only commands declared in `commands.json` can run. Claude Code cannot call `bash`, `curl`, `ssh`, or any other executable not on the list.
+The bridge performs a allowlist lookup before execution. Only commands declared in `commands.json` can run. Claude Code cannot call `bash`, `curl`, `ssh`, or any other executable not on the list.
 
 **Reaching the Docker host machine.**  
 Without Docker socket access and with the firewall rule blocking the bridge gateway IP (`W.X.Y.1`), Claude Code has no path to the host machine. The bridge runs inside a sibling container, not on the host.
@@ -53,7 +53,7 @@ Every tool call — including rejections — is logged with full arguments, stdo
 ### 2.2 What it does NOT prevent
 
 **Code execution of content written by Claude Code.**  
-This is the most important nuance. If Claude Code can write files (it can — that is its primary capability), and a whitelisted command executes those files, then **whitelisting that command grants code execution**.
+This is the most important nuance. If Claude Code can write files (it can — that is its primary capability), and a allowlisted command executes those files, then **allowlisting that command grants code execution**.
 
 The commands split into two distinct risk categories:
 
@@ -70,7 +70,7 @@ For Category A commands, the threat surface is:
 - **Reading the container filesystem.** Ruff, mypy, and similar tools can read any file in their configured path. This includes application secrets, `.env` files, and environment variables exported to the subprocess environment. However, Claude Code already has filesystem read access via its volume mount, so this grants no new capability.
 - **Resource exhaustion.** A crafted file could cause excessive CPU or memory usage. The `timeout` field in `commands.json` bounds the time window; subprocess resource caps are not enforced beyond this.
 
-**For Category A-only whitelists, the bridge provides meaningful containment.** Claude Code cannot execute arbitrary code through static analysis tools.
+**For Category A-only allowlists, the bridge provides meaningful containment.** Claude Code cannot execute arbitrary code through static analysis tools.
 
 [^1]: mypy may import stub packages and plugins at startup, but does not execute user-written test or application code.
 
@@ -108,8 +108,8 @@ The bridge is designed for a trusted AI model in a dev workflow. The question is
 | Attack vector | Blocked? | How |
 |---|---|---|
 | Shell injection via args (`; rm -rf /`) | Yes | shell=False + metacharacter blocklist |
-| Calling unlisted commands | Yes | Whitelist lookup; unknown names rejected |
-| Modifying the whitelist at runtime | Yes | commands.json mounted :ro |
+| Calling unlisted commands | Yes | Allowlist lookup; unknown names rejected |
+| Modifying the allowlist at runtime | Yes | commands.json mounted :ro |
 | Docker socket access | Yes | Not mounted; no path to daemon |
 | Reaching host via bridge gateway | Yes (with recommended firewall) | iptables REJECT on gateway IP |
 | Reaching other containers | Yes (with recommended firewall) | iptables allows only port 7357 on bridge subnet |
@@ -214,7 +214,7 @@ In addition to everything in Profile 2, this allows Claude Code to pass arbitrar
 
 **Audit log is not tamper-proof.** The JSONL file is a plain file on a volume mount. A process running in the container can delete or modify it. The log is useful for debugging and review, not forensic evidence.
 
-**No resource caps beyond timeout.** A whitelisted command can use all available CPU and RAM until the timeout. Docker resource limits on the container are the appropriate mechanism; the bridge does not add additional caps.
+**No resource caps beyond timeout.** A allowlisted command can use all available CPU and RAM until the timeout. Docker resource limits on the container are the appropriate mechanism; the bridge does not add additional caps.
 
 **Shared container filesystem.** The bridge subprocess has the same filesystem access as the application. There is no chroot or additional isolation per tool invocation.
 

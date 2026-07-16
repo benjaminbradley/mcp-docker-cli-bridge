@@ -13,7 +13,7 @@ Claude Code natively supports MCP (Model Context Protocol) servers over Streamab
 
 ## Decision
 
-Replace the raw `http.server` implementation with a proper MCP server using the Python MCP SDK (`mcp` package). The bridge exposes whitelisted commands as MCP tools over Streamable HTTP transport.
+Replace the raw `http.server` implementation with a proper MCP server using the Python MCP SDK (`mcp` package). The bridge exposes allowlisted commands as MCP tools over Streamable HTTP transport.
 
 ## Consequences
 
@@ -31,14 +31,14 @@ Replace the raw `http.server` implementation with a proper MCP server using the 
 
 ### Neutral
 
-- **Core executor logic unchanged.** The whitelist loader, argument validator, subprocess executor, and JSONL logger are identical. Only the interface layer changes.
+- **Core executor logic unchanged.** The allowlist loader, argument validator, subprocess executor, and JSONL logger are identical. Only the interface layer changes.
 - **Operational model unchanged.** The operator still writes a `commands.json`, mounts it read-only, and starts the dev container. The bridge is still removable by deleting the dev overlay files.
 
 ## Alternatives Considered
 
 ### Use existing mcp-shell-server (tumf/mcp-shell-server)
 
-Rejected. Uses a flat command allowlist via environment variable, allows the caller to pass arbitrary arguments to any allowed command, has no per-command working directory or extra-args restriction, no JSONL audit logging, and runs over stdio transport only (would need an mcp-proxy sidecar for HTTP). The security model is fundamentally different from our named-recipe whitelist approach.
+Rejected. Uses a flat command allowlist via environment variable, allows the caller to pass arbitrary arguments to any allowed command, has no per-command working directory or extra-args restriction, no JSONL audit logging, and runs over stdio transport only (would need an mcp-proxy sidecar for HTTP). The security model is fundamentally different from our named-recipe allowlist approach.
 
 ### Use mcp-shell-server + mcp-proxy sidecar
 

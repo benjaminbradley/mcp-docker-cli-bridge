@@ -30,7 +30,7 @@ Legend:
 
 ## Phase 0 — MCP Server Skeleton, Models, and Config Loader
 
-**Goal:** A running MCP server that loads and validates `commands.json` on startup via pydantic models, registers tools from the whitelist, and responds to `tools/list`. No command execution yet — just startup, config validation, tool registration, and transport.
+**Goal:** A running MCP server that loads and validates `commands.json` on startup via pydantic models, registers tools from the allowlist, and responds to `tools/list`. No command execution yet — just startup, config validation, tool registration, and transport.
 
 ### 0.0 — Dev container setup
 
@@ -39,7 +39,7 @@ Legend:
 
 - [x] Create `Dockerfile` (base stage: MCP SDK deps + server.py + non-root user; dev stage: adds pytest, ruff, mypy, pytest-asyncio)
 - [x] Create `docker-compose.yml` (service `my-app`, port `127.0.0.1:7357:7357`, volumes: `commands.dev.json:ro`, `data/bridge-logs`, `server.py`, `tests/`)
-- [x] Create `commands.dev.json` (e2e test whitelist: `echo_test`, `run_tests`, `run_lint`, `run_typecheck`, `run_format_check`, `sleep_test`)
+- [x] Create `commands.dev.json` (e2e test allowlist: `echo_test`, `run_tests`, `run_lint`, `run_typecheck`, `run_format_check`, `sleep_test`)
 - [x] Create `Makefile` (`help`, `build`, `up`, `down`, `logs`, `test`, `lint`, `typecheck`, `format`, `shell`)
 - [x] Create `.mcp.json` (registers `http://my-app:7357/mcp` as `bridge-dev` MCP server)
 - [x] **Verify:** `make build` ✅ · `make up`/`make logs` (banner) ✅ · `make down` ✅ · `make test` (7 passing) ✅ · `bridge-dev` tools discovered ✅ · invalid config errors ✅

@@ -1,4 +1,4 @@
-"""MCP Docker CLI Bridge — exposes whitelisted CLI commands as MCP tools."""
+"""MCP Docker CLI Bridge — exposes allowlisted CLI commands as MCP tools."""
 
 import asyncio
 import json
@@ -24,7 +24,7 @@ from pydantic import BaseModel, ValidationError, field_validator
 
 
 class CommandEntry(BaseModel):
-    """A single command in the whitelist."""
+    """A single command in the allowlist."""
 
     command: list[str]
     allow_extra_args: bool
@@ -558,7 +558,7 @@ def validate_args(args: list[str]) -> str | None:
 
 
 async def execute_command(name: str, args: list[str], config: CommandsConfig) -> CommandResult:
-    """Run the whitelisted command in a thread pool and return its result. Raises on timeout or missing executable."""
+    """Run the allowlisted command in a thread pool and return its result. Raises on timeout or missing executable."""
     entry = config.commands[name]
     argv = entry.command + args
     timeout = config.effective_timeout(name)
@@ -810,7 +810,7 @@ def _create_tool_handler(
 
 
 def _register_tools(mcp: FastMCP, commands: CommandsConfig, log_dir: str, log_file: str) -> None:
-    """Register one MCP tool per whitelist entry."""
+    """Register one MCP tool per allowlist entry."""
     for name, entry in commands.commands.items():
         description = "Execute: " + " ".join(entry.command)
         handler = _create_tool_handler(name, commands, log_dir, log_file)

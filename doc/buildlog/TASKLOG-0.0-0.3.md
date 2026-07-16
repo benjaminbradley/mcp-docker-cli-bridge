@@ -24,7 +24,7 @@
 - **Approach:**
   - Create `Dockerfile` (multi-stage: base + dev with test tooling)
   - Create `docker-compose.yml` (service `my-app`, port mapping, volumes)
-  - Create `commands.dev.json` (e2e whitelist for self-hosting verification)
+  - Create `commands.dev.json` (e2e allowlist for self-hosting verification)
   - Create `Makefile` (lifecycle + test/lint/typecheck targets)
   - Create `.mcp.json` (registers bridge-dev at `http://my-app:7357/mcp`)
 - **Tests:** Infrastructure task — no TDD cycle.

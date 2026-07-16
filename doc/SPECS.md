@@ -21,9 +21,9 @@ The MCP Python SDK handles protocol negotiation, JSON-RPC framing, and session m
 
 ### 1.2 Tool Discovery (tools/list)
 
-On `tools/list`, the server returns one tool per whitelist entry. Tool definitions are generated dynamically from `commands.json` at startup.
+On `tools/list`, the server returns one tool per allowlist entry. Tool definitions are generated dynamically from `commands.json` at startup.
 
-Example response (for a whitelist with three commands):
+Example response (for a allowlist with three commands):
 
 ```json
 {
@@ -197,7 +197,7 @@ The bridge does not implement Resources, Prompts, Sampling, or Resource Subscrip
 
 ---
 
-## 2. Command Whitelist Schema (commands.json)
+## 2. Command Allowlist Schema (commands.json)
 
 ### 2.1 File Format
 
@@ -245,7 +245,7 @@ A JSON object with a `default_timeout` field and a `commands` object where each 
 
 ### 2.4 Validation at Startup
 
-The whitelist file is parsed and validated using the `CommandsConfig` and `CommandEntry` pydantic models (see §6.1). The server exits with a non-zero exit code if pydantic validation fails — the error message includes field-level detail from pydantic's validation output.
+The allowlist file is parsed and validated using the `CommandsConfig` and `CommandEntry` pydantic models (see §6.1). The server exits with a non-zero exit code if pydantic validation fails — the error message includes field-level detail from pydantic's validation output.
 
 On successful startup, the server logs:
 - Number of commands loaded and their names.
@@ -345,13 +345,13 @@ The log file is opened in append mode, one line is written, and the file is clos
 
 ## 5. Server Configuration
 
-All configuration is via environment variables with sensible defaults, loaded into a `BridgeConfig` pydantic model at startup (see §6.1). No config file for the server itself (the whitelist is for commands, not server settings).
+All configuration is via environment variables with sensible defaults, loaded into a `BridgeConfig` pydantic model at startup (see §6.1). No config file for the server itself (the allowlist is for commands, not server settings).
 
 | Variable | Default | Description |
 |---|---|---|
 | `BRIDGE_PORT` | `7357` | Port the MCP HTTP server listens on |
 | `BRIDGE_HOST` | `0.0.0.0` | Bind address |
-| `BRIDGE_COMMANDS_FILE` | `/bridge/commands.json` | Path to the whitelist config |
+| `BRIDGE_COMMANDS_FILE` | `/bridge/commands.json` | Path to the allowlist config |
 | `BRIDGE_LOG_DIR` | `/bridge/logs` | Directory for the JSONL log file |
 | `BRIDGE_LOG_FILE` | `bridge.jsonl` | Log file name within the log directory |
 
@@ -367,7 +367,7 @@ The server is a single file. Internal organization:
 
 ```python
 class CommandEntry(BaseModel):
-    """A single command in the whitelist."""
+    """A single command in the allowlist."""
     command: list[str]              # Non-empty; first element is executable
     allow_extra_args: bool
     cwd: str
@@ -661,7 +661,7 @@ Files the consumer project provides:
 
 ```
 example-app/
-├── commands.json              # Bridge whitelist (project-specific)
+├── commands.json              # Bridge allowlist (project-specific)
 ├── .mcp.json                  # MCP registration for Claude Code
 ├── docker-compose.dev.yml     # Dev overlay (bridge integration)
 ├── docker/

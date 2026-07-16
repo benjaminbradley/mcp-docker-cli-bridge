@@ -13,7 +13,7 @@ The current workaround — asking a human operator to run `make test` and paste 
 
 ## 2. Solution Overview
 
-An MCP (Model Context Protocol) server that runs inside the application's Docker container during development. It exposes whitelisted CLI commands as MCP tools over Streamable HTTP transport. An external AI agent discovers and calls these tools over a shared Docker bridge network using the container's DNS name.
+An MCP (Model Context Protocol) server that runs inside the application's Docker container during development. It exposes allowlisted CLI commands as MCP tools over Streamable HTTP transport. An external AI agent discovers and calls these tools over a shared Docker bridge network using the container's DNS name.
 
 The bridge is **dev-only infrastructure**. It must not exist in production images and must be removable without any changes to the application's source code.
 
@@ -23,7 +23,7 @@ The bridge is **dev-only infrastructure**. It must not exist in production image
 
 - **Controller:** The AI development agent (Claude Code) running in its own container. Connects to the bridge as an MCP client. Has filesystem access to the application's source code but no Docker socket access.
 - **Target:** The application container running the bridge server. Hosts the application code, dev tools (pytest, ruff, mypy, etc.), and the bridge MCP server process.
-- **Human Operator:** Sets up the dev environment, starts the dev container, configures the command whitelist. Uses the application's Makefile directly (not the bridge) for interactive work.
+- **Human Operator:** Sets up the dev environment, starts the dev container, configures the command allowlist. Uses the application's Makefile directly (not the bridge) for interactive work.
 
 ---
 
@@ -31,18 +31,18 @@ The bridge is **dev-only infrastructure**. It must not exist in production image
 
 ### 4.1 Command Execution
 
-The bridge must expose each whitelisted command as an MCP tool. When a tool is called, the bridge executes the corresponding command inside the container and returns the result.
+The bridge must expose each allowlisted command as an MCP tool. When a tool is called, the bridge executes the corresponding command inside the container and returns the result.
 
-- **Tool discovery:** The bridge must respond to MCP `tools/list` requests with a tool definition for each command in the whitelist. Each tool definition includes the command name, a human-readable description (derived from the executable prefix), and an input schema.
+- **Tool discovery:** The bridge must respond to MCP `tools/list` requests with a tool definition for each command in the allowlist. Each tool definition includes the command name, a human-readable description (derived from the executable prefix), and an input schema.
 - **Tool invocation:** When a tool is called via MCP `tools/call`, the bridge executes the command via Python's `subprocess.run` with `shell=False`. The bridge constructs the full argument vector by prepending the command's configured executable prefix to any caller-provided arguments.
 - **Tool result:** The bridge returns a structured result containing `stdout` (string), `stderr` (string), and `exit_code` (integer). Non-zero exit codes are reported as successful tool results (the bridge faithfully reports what the subprocess returned). Only bridge-level failures (unknown command, validation errors, timeouts) are reported as MCP tool errors.
-- **Timeout:** Each command has an effective timeout determined by: (1) a per-command timeout in the whitelist config, if set; otherwise (2) the global default timeout in the whitelist config. Processes exceeding the timeout are killed and a tool error is returned.
+- **Timeout:** Each command has an effective timeout determined by: (1) a per-command timeout in the allowlist config, if set; otherwise (2) the global default timeout in the allowlist config. Processes exceeding the timeout are killed and a tool error is returned.
 
-### 4.2 Command Whitelist
+### 4.2 Command Allowlist
 
-The bridge must restrict execution to a predefined set of named commands. The whitelist is the **sole authorization mechanism** — any request for an unlisted command is rejected.
+The bridge must restrict execution to a predefined set of named commands. The allowlist is the **sole authorization mechanism** — any request for an unlisted command is rejected.
 
-The whitelist config defines global settings and per-command entries:
+The allowlist config defines global settings and per-command entries:
 
 **Global settings:**
 - **Default timeout:** Global subprocess timeout in seconds (default: 60). Applied to any command that does not specify its own timeout.
@@ -54,10 +54,10 @@ The whitelist config defines global settings and per-command entries:
 - **Working directory:** The directory from which the command executes (e.g., `/app`).
 - **Timeout (optional):** Per-command timeout override in seconds. If omitted, the global default timeout applies.
 
-The whitelist must be:
+The allowlist must be:
 - **Externally configured:** Defined in a JSON file, not hardcoded in the server.
-- **Immutable at runtime:** The config file must be mounted read-only into the container so that neither the bridge server nor any process invoked through it can modify the whitelist.
-- **Instance-specific:** Each project defines its own whitelist for its own dev tools. The bridge server reads the config on startup.
+- **Immutable at runtime:** The config file must be mounted read-only into the container so that neither the bridge server nor any process invoked through it can modify the allowlist.
+- **Instance-specific:** Each project defines its own allowlist for its own dev tools. The bridge server reads the config on startup.
 
 ### 4.3 Argument Safety
 
@@ -193,7 +193,7 @@ The bridge must be fully removable from a host project without modifying any app
 - **Dockerfile integration** uses a multi-stage build. The production stage does not include the bridge. The dev stage extends the production stage with the bridge layer.
 - **Compose integration** uses a separate override file (e.g., `docker-compose.dev.yml`). Removing the override file restores the original ephemeral-container behavior.
 - **MCP registration** is a standalone config file (`.mcp.json`) or a CLI registration (`claude mcp remove`). Removing it deregisters the bridge from the Controller.
-- **Whitelist config** is a standalone file mounted into the container, not part of the application's configuration.
+- **Allowlist config** is a standalone file mounted into the container, not part of the application's configuration.
 - **No application code imports or references** the bridge. The bridge is infrastructure, not a library.
 
 ---
@@ -202,16 +202,16 @@ The bridge must be fully removable from a host project without modifying any app
 
 The bridge must be usable across multiple CLI-based Docker projects without modification to the bridge code itself.
 
-- Each host project provides its own `commands.json` whitelist.
+- Each host project provides its own `commands.json` allowlist.
 - Each host project provides its own Dockerfile dev stage and compose override that reference the shared bridge server file.
 - The bridge server is a single Python file that depends on the MCP Python SDK and Python stdlib. Dependencies are declared in a `requirements.txt` shipped alongside the server.
-- The bridge makes no assumptions about the application's language, framework, or tooling — it executes arbitrary (whitelisted) CLI commands.
+- The bridge makes no assumptions about the application's language, framework, or tooling — it executes arbitrary (allowlisted) CLI commands.
 
 ---
 
 ## 10. Non-Requirements (Explicit Exclusions)
 
-- **Authentication/authorization** beyond the command whitelist. The bridge is accessible only within the Docker network, which is sufficient for the dev use case.
+- **Authentication/authorization** beyond the command allowlist. The bridge is accessible only within the Docker network, which is sufficient for the dev use case.
 - **HTTPS/TLS.** Traffic is container-to-container on an isolated Docker network.
 - **Persistent state.** The bridge is stateless (aside from the append-only log file). No database, no session tracking.
 - **File transfer.** The bridge does not upload or download files. The Controller and Target share access to source files via their respective volume mounts.
