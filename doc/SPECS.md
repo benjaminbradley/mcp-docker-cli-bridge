@@ -101,6 +101,7 @@ Example response (for a allowlist with three commands):
 ```
 
 Key behaviors:
+
 - Commands with `allow_extra_args: true` include an `args` property in the schema.
 - Commands with `allow_extra_args: false` have no `args` parameter — only `pipe`, `cache`, and `cache_id` are exposed.
 - `pipe`, `cache`, and `cache_id` are present in every tool's schema regardless of `allow_extra_args`.
@@ -185,6 +186,7 @@ The `text` field contains a `CommandResult` model serialized to JSON (see §6.1)
 ```
 
 Bridge-level errors that set `isError: true`:
+
 - Concurrency rejection (another command is already running). The error message names the in-progress command and tells the client to retry.
 - Argument validation failure (metacharacter detected).
 - Command timeout (`subprocess.TimeoutExpired`).
