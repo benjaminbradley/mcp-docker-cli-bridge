@@ -1,6 +1,6 @@
 # Security Model — MCP Docker CLI Bridge
 
-> **Last updated:** 2026-06-02
+> **Last updated:** 2026-07-16
 
 ---
 
@@ -242,7 +242,7 @@ Every dependency-resolving and package-installing step across dev, lock generati
 | `Makefile` `lock` / `lock-upgrade` | `docker run -e` + `uv pip compile --exclude-newer` | Passes `COOLDOWN_DAYS` into the throwaway `python:3.12-slim` container; the container converts it to an absolute RFC 3339 cutoff and passes it to `uv` |
 | `Dockerfile` base stage | Build `ARG` + `ENV` | `ARG PIP_UPLOADED_PRIOR_TO=P3D` → `ENV`. Applies to `RUN pip install -r requirements.txt` and inherited by dev stage |
 | `dev/docker-compose.yml` | Build args | `build.args.PIP_UPLOADED_PRIOR_TO: ${PIP_UPLOADED_PRIOR_TO:-P3D}` — reads exported Makefile var, defaults to P3D |
-| `.github/workflows/ci.yml` | Workflow-level `env:` | Both `validate` (host pip), `docker-validate` (compose build → args expansion), and `audit` (pip-audit's install phase) inherit |
+| `.github/workflows/ci.yml` | Workflow-level `env:` | Both `docker-validate` (compose build → args expansion) and `audit` (pip-audit's install phase) inherit |
 | `.github/workflows/publish.yml` | Dockerfile ARG default | Uses `docker/build-push-action` with no explicit build-arg; falls back to the `ARG PIP_UPLOADED_PRIOR_TO=P3D` default in the Dockerfile |
 
 ### 6.3 Why lock-time enforcement is load-bearing
